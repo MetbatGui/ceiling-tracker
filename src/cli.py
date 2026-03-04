@@ -16,13 +16,13 @@ if sys.platform.startswith('win'):
     sys.stdout.reconfigure(encoding='utf-8')
 
 try:
-    from src.infrastructure.adapters import PykrxStockInfoAdapter
+    from src.infrastructure.krx_adapter import KrxDirectStockInfoAdapter
     from src.infrastructure.repository import ParquetCohortRepository, ExcelExporter
     from src.infrastructure.storage_adapters import LocalStorageAdapter, GoogleDriveAdapter
     from src.application.service import DailyUpdateService, RangeUpdateService
 except ImportError as e:
     try:
-        from infrastructure.adapters import PykrxStockInfoAdapter
+        from infrastructure.krx_adapter import KrxDirectStockInfoAdapter
         from infrastructure.repository import ParquetCohortRepository, ExcelExporter
         from infrastructure.storage_adapters import LocalStorageAdapter, GoogleDriveAdapter
         from application.service import DailyUpdateService, RangeUpdateService
@@ -116,7 +116,7 @@ def daily_update(target_date_str, use_drive):
         else:
             return
 
-    provider = PykrxStockInfoAdapter()
+    provider = KrxDirectStockInfoAdapter()
     repo = _build_repo(storage)
     service = DailyUpdateService(provider, repo)
 
@@ -186,7 +186,7 @@ def range_update(start_date_str, end_date_str, use_drive):
         else:
             return
 
-    provider = PykrxStockInfoAdapter()
+    provider = KrxDirectStockInfoAdapter()
     repo = _build_repo(storage)
     service = RangeUpdateService(provider, repo)
 
@@ -230,7 +230,7 @@ def annual_update(start_year, end_year, use_drive):
         click.echo(f"\n>>> Processing Year: {year} ({start_date} ~ {end_date})")
 
         try:
-            provider = PykrxStockInfoAdapter()
+            provider = KrxDirectStockInfoAdapter()
             repo = _build_repo(storage)
             service = RangeUpdateService(provider, repo)
             service.execute_range_update(start_date, end_date)

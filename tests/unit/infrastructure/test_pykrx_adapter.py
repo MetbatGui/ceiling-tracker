@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from datetime import date
 import pandas as pd
-from src.infrastructure.adapters import PykrxStockInfoAdapter
+from src.infrastructure.pykrx_adapter import PykrxStockInfoAdapter
 
 @pytest.fixture
 def adapter():
@@ -10,7 +10,7 @@ def adapter():
 
 @pytest.fixture
 def mock_stock():
-    with patch('src.infrastructure.adapters.stock') as mock:
+    with patch('src.infrastructure.pykrx_adapter.stock') as mock:
         yield mock
 
 def test_fetch_today_ceiling_stocks(adapter, mock_stock):

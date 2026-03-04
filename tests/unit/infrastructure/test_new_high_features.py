@@ -2,84 +2,97 @@ import pytest
 import pandas as pd
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
-from src.infrastructure.adapters import PykrxStockInfoAdapter
+from src.infrastructure.pykrx_adapter import PykrxStockInfoAdapter
 from src.infrastructure.repository import ExcelCohortRepository
 from src.domain.model import CeilingCohort, Stock, TrackedStock
 import os
 
 # --- Adapter Tests ---
 
-@patch('src.infrastructure.adapters.stock.get_market_price_change_by_ticker')
-@patch('src.infrastructure.adapters.stock.get_market_ohlcv_by_date')
-def test_adapter_identifies_all_time_high(mock_ohlcv, mock_price_change):
+@patch('src.infrastructure.krx_adapter.KrxDirectStockInfoAdapter._fetch_all_markets')
+@patch('src.infrastructure.krx_adapter.requests.Session.post')
+def test_adapter_identifies_all_time_high(mock_post, mock_fetch_all):
     # Setup - Target Date
     target_date = date(2026, 1, 23)
     target_date_str = "20260123"
     
-    # Mock Price Change (Today's Ceiling Candidate)
-    # columns: 종목명, 시가, 종가, 등락률, 거래량, ...
-    # We need '종목명', '종가', '등락률'
-    # return DataFrame indexed by Ticker
-    mock_price_change.return_value = pd.DataFrame({
-        '종목명': ['Samsung'],
-        '종가': [100000],
-        '등락률': [30.00] # 30%
-    }, index=['005930'])
+    # Mock _fetch_all_markets (Today's Ceiling Candidate)
+    mock_fetch_all.return_value = [
+        {
+            'ISU_ABBRV': 'Samsung',
+            'ISU_SRT_CD': '005930',
+            'ISU_CD': 'KR7005930003',
+            'TDD_CLSPRC': '100,000',
+            'FLUC_RT': '30.00' # 30%
+        }
+    ]
     
-    # Mock OHLCV (History)
-    # return DataFrame with '고가' (High)
-    def history_side_effect(start, end, ticker):
-        if ticker == "005930":
-            dates = pd.date_range(start="2020-01-01", periods=5)
-            return pd.DataFrame({
-                '고가': [50000, 60000, 80000, 90000, 100000] # Max is 100000 (Current)
-            }, index=dates)
-        return pd.DataFrame()
+    # Mock OHLCV History API (MDCSTAT01701)
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        'output': [
+            {'TRD_DD': '2020/01/01', 'TDD_HGPRC': '50,000'},
+            {'TRD_DD': '2020/01/02', 'TDD_HGPRC': '60,000'},
+            {'TRD_DD': '2020/01/03', 'TDD_HGPRC': '80,000'},
+            {'TRD_DD': '2020/01/04', 'TDD_HGPRC': '90,000'},
+            {'TRD_DD': '2020/01/05', 'TDD_HGPRC': '100,000'},
+        ]
+    }
+    mock_post.return_value = mock_response
+    
+    # Ensure env vars are set for test to not trigger ValueError
+    os.environ['KRX_USERNAME'] = 'testuser'
+    os.environ['KRX_PASSWORD'] = 'testpw'
+    
+    from src.infrastructure.krx_adapter import KrxDirectStockInfoAdapter
+    # Override _login to do nothing to avoid HTTP call during init
+    with patch.object(KrxDirectStockInfoAdapter, '_login', return_value=None):
+        adapter = KrxDirectStockInfoAdapter()
+        results = adapter.fetch_today_ceiling_stocks(target_date)
         
-    mock_ohlcv.side_effect = history_side_effect
-    
-    adapter = PykrxStockInfoAdapter()
-    results = adapter.fetch_today_ceiling_stocks(target_date)
-    
-    assert len(results) == 2  # KOSPI + KOSDAQ 각각 호출
-    assert results[0]['new_high_status'] == "역·신"
+        assert len(results) == 1
+        assert results[0]['new_high_status'] == "역·신"
 
-@patch('src.infrastructure.adapters.stock.get_market_price_change_by_ticker')
-@patch('src.infrastructure.adapters.stock.get_market_ohlcv_by_date')
-def test_adapter_identifies_52_week_near(mock_ohlcv, mock_price_change):
+@patch('src.infrastructure.krx_adapter.KrxDirectStockInfoAdapter._fetch_all_markets')
+@patch('src.infrastructure.krx_adapter.requests.Session.post')
+def test_adapter_identifies_52_week_near(mock_post, mock_fetch_all):
     target_date = date(2026, 1, 23)
     
-    mock_price_change.return_value = pd.DataFrame({
-        '종목명': ['SkHynix'],
-        '종가': [92000],
-        '등락률': [30.0]
-    }, index=['000660'])
+    # Mock _fetch_all_markets
+    mock_fetch_all.return_value = [
+        {
+            'ISU_ABBRV': 'SkHynix',
+            'ISU_SRT_CD': '000660',
+            'ISU_CD': 'KR7000660001',
+            'TDD_CLSPRC': '92,000',
+            'FLUC_RT': '30.0'
+        }
+    ]
     
-    def history_side_effect(start, end, ticker):
-        if ticker == "000660":
-            dates = pd.date_range(start="2020-01-01", end="2026-01-23", freq='M')
-            data = {'고가': [50000] * len(dates)}
-            df = pd.DataFrame(data, index=dates)
-            
-            # Set All Time High long ago
-            df.loc['2020-01-31', '고가'] = 200000
-            
-            # Set 52 Week High recently (within last year from 2026-01-23)
-            # A year ago is 2025-01-23
-            df.loc['2025-06-30', '고가'] = 100000
-            
-            return df
-        return pd.DataFrame()
-
-    mock_ohlcv.side_effect = history_side_effect
+    # Mock OHLCV History API (MDCSTAT01701)
+    # Target date is 2026/01/23. 
+    # All-time high: 200,000 in 2020/01/31
+    # 52w high: 100,000 in 2025/06/30
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        'output': [
+            {'TRD_DD': '2020/01/31', 'TDD_HGPRC': '200,000'},
+            {'TRD_DD': '2025/06/30', 'TDD_HGPRC': '100,000'},
+        ]
+    }
+    mock_post.return_value = mock_response
     
-    adapter = PykrxStockInfoAdapter()
-    results = adapter.fetch_today_ceiling_stocks(target_date)
+    os.environ['KRX_USERNAME'] = 'testuser'
+    os.environ['KRX_PASSWORD'] = 'testpw'
     
-    # 92000 vs 52w Max 100000 -> 0.92 -> "52·근"
-    # All time max is 200000.
-    assert len(results) == 2  # KOSPI + KOSDAQ 각각 호출
-    assert results[0]['new_high_status'] == "52·근"
+    from src.infrastructure.krx_adapter import KrxDirectStockInfoAdapter
+    with patch.object(KrxDirectStockInfoAdapter, '_login', return_value=None):
+        adapter = KrxDirectStockInfoAdapter()
+        results = adapter.fetch_today_ceiling_stocks(target_date)
+        
+        # 92000 vs 52w Max 100000 -> 0.92 -> "52·근"
+        assert len(results) == 1
+        assert results[0]['new_high_status'] == "52·근"
 
 
 # --- Repository Tests ---

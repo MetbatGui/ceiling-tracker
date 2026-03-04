@@ -1,0 +1,383 @@
+import os
+import requests
+from typing import List, Dict, Any
+from datetime import date
+from src.domain.ports import StockDataProvider
+
+class KrxDirectStockInfoAdapter(StockDataProvider):
+    """
+    KRX 정보데이터시스템(data.krx.co.kr)에서 직접 데이터를 스크래핑하는 어댑터입니다.
+    """
+    
+    BASE_URL = "https://data.krx.co.kr"
+    LOGIN_URL = f"{BASE_URL}/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
+    
+    def __init__(self, mbr_id: str = None, pw: str = None):
+        self.mbr_id = mbr_id or os.getenv("KRX_USERNAME")
+        self.pw = pw or os.getenv("KRX_PASSWORD")
+        
+        if not self.mbr_id or not self.pw:
+            raise ValueError("KRX_USERNAME 또는 KRX_PASSWORD 환경변수가 설정되지 않았습니다.")
+            
+        self.session = requests.Session()
+        self._login()
+
+    def _login(self) -> None:
+        """
+        KRX 정보데이터시스템 로그인 후 세션 쿠키(JSESSIONID)를 갱신합니다.
+        
+        로그인 흐름:
+          1. GET MDCCOMS001.cmd  → 초기 JSESSIONID 발급
+          2. GET login.jsp       → iframe 세션 초기화
+          3. POST MDCCOMS001D1.cmd → 실제 로그인
+          4. CD011(중복 로그인) → skipDup=Y 추가 후 재전송
+        """
+        _LOGIN_PAGE = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001.cmd"
+        _LOGIN_JSP  = "https://data.krx.co.kr/contents/MDC/COMS/client/view/login.jsp?site=mdc"
+        _LOGIN_URL  = "https://data.krx.co.kr/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
+        _UA = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        )
+        
+        try:
+            # 1 & 2. 초기 세션 발급
+            self.session.get(_LOGIN_PAGE, headers={"User-Agent": _UA}, timeout=15)
+            self.session.get(_LOGIN_JSP, headers={"User-Agent": _UA, "Referer": _LOGIN_PAGE}, timeout=15)
+            
+            payload = {
+                "mbrNm": "", "telNo": "", "di": "", "certType": "",
+                "mbrId": self.mbr_id, "pw": self.pw,
+            }
+            headers = {"User-Agent": _UA, "Referer": _LOGIN_PAGE}
+            
+            # 3. 로그인 POST
+            resp = self.session.post(_LOGIN_URL, data=payload, headers=headers, timeout=15)
+            data = resp.json()
+            error_code = data.get("_error_code", "")
+            
+            # 4. CD011 중복 로그인 처리
+            if error_code == "CD011":
+                payload["skipDup"] = "Y"
+                resp = self.session.post(_LOGIN_URL, data=payload, headers=headers, timeout=15)
+                data = resp.json()
+                error_code = data.get("_error_code", "")
+                
+            if error_code == "CD001":
+                print(f"[KRX Adapter] 세션 획득 완료 (회원번호: {data.get('MBR_NO', '')})")
+            else:
+                print(f"[KRX Adapter] 로그인 에러: {data}")
+                
+            # 기본 쿠키 세팅
+            self.session.cookies.set('mdc.client_session', 'true', domain='data.krx.co.kr')
+            self.session.cookies.set('lang', 'ko_KR', domain='data.krx.co.kr')
+            
+        except Exception as e:
+            print(f"[KRX Adapter] 로그인 요청 실패: {e}")
+    def _fetch_all_markets(self, target_date_str: str) -> List[Dict[str, Any]]:
+        """MDCSTAT01501을 호출하여 특정 날짜의 전종목 시세를 조회합니다."""
+        url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+        headers = {
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Origin': self.BASE_URL,
+            'Referer': f'{self.BASE_URL}/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+        payload = {
+            'bld': 'dbms/MDC/STAT/standard/MDCSTAT01501',
+            'locale': 'ko_KR',
+            'mktId': 'ALL',
+            'trdDd': target_date_str,
+            'share': '1',
+            'money': '1',
+            'csvxls_isNo': 'false',
+        }
+        res = self.session.post(url, headers=headers, data=payload)
+        if res.status_code != 200:
+            return []
+        data = res.json()
+        output = data.get('OutBlock_1', [])
+        if not output: 
+            output = data.get('output', [])
+        return output
+
+    def _parse_num(self, val: str) -> float:
+        try:
+            return float(val.replace(',', ''))
+        except (ValueError, TypeError):
+            return 0.0
+
+    def fetch_today_ceiling_stocks(self, target_date: date) -> List[Dict[str, Any]]:
+        target_date_str = target_date.strftime("%Y%m%d")
+        print(f"[KRX Adapter] Fetching market data for {target_date}...")
+        
+        items = self._fetch_all_markets(target_date_str)
+        if not items:
+            print(f"[Warning] No data found for {target_date}. Is it a holiday?")
+            return []
+            
+        results = []
+        for row in items:
+            fluc_rt = self._parse_num(row.get('FLUC_RT', '0'))
+            close_prc = int(self._parse_num(row.get('TDD_CLSPRC', '0')))
+            
+            # 상한가 조건 (29.5 이상 30.5 이하), 종가 0 초과
+            if 29.5 <= fluc_rt <= 30.5 and close_prc > 0:
+                name = row.get('ISU_ABBRV', '')
+                code = row.get('ISU_SRT_CD', '')
+                isu_cd = row.get('ISU_CD', '') # for OHLCV history
+                
+                res = {
+                    'name': name,
+                    'code': code,
+                    'close': close_prc,
+                    'rate': round(fluc_rt / 100, 4),
+                    'new_high_status': "",
+                    '_isu_cd': isu_cd # Internal parsing usage
+                }
+                
+                self._analyze_new_high(res, target_date_str)
+                results.append(res)
+                print(f"  -> Found: {name} ({res['rate']*100:.2f}%) Status: {res['new_high_status']}")
+                
+        return results
+
+    def _analyze_new_high(self, res: dict, target_date_str: str):
+        """특정 종목의 과거 시세(MDCSTAT01701)를 호출해 신고가 여부를 판단합니다."""
+        url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+        headers = {
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Origin': self.BASE_URL,
+            'Referer': f'{self.BASE_URL}/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+        payload = {
+            'bld': 'dbms/MDC/STAT/standard/MDCSTAT01701',
+            'locale': 'ko_KR',
+            'isuCd': res['_isu_cd'],
+            'isuSrtCd': res['code'],
+            'strtDd': '19900101', # Pykrx에서 사용하던 조회범위
+            'endDd': target_date_str,
+            'adjStkPrc_isNo': 'Y', 
+            'share': '1',
+            'money': '1',
+            'csvxls_isNo': 'false',
+        }
+        
+        try:
+            resp = self.session.post(url, headers=headers, data=payload)
+            history = resp.json().get('output', [])
+            if not history:
+                return
+                
+            # history is sorted usually descending or ascending, but we parse it into a list of highs
+            high_prices = [self._parse_num(d.get('TDD_HGPRC', '0')) for d in history if d.get('TDD_HGPRC')]
+            if not high_prices:
+                return
+                
+            max_all_time = max(high_prices)
+            current_close = res['close']
+            
+            # Calculate 52w high (approx 250 trading days or just grab last 1 year from strings)
+            # data returns 'TRD_DD': '2026/03/03'. We can filter this simply.
+            import datetime
+            target_dt = datetime.datetime.strptime(target_date_str, "%Y%m%d")
+            cutoff_52w = target_dt - datetime.timedelta(days=365)
+            
+            recent_52w_highs = []
+            for row in history:
+                trd_str = row.get('TRD_DD', '').replace('/', '')
+                if not trd_str: continue
+                trd_dt = datetime.datetime.strptime(trd_str, "%Y%m%d")
+                if trd_dt >= cutoff_52w:
+                    recent_52w_highs.append(self._parse_num(row.get('TDD_HGPRC', '0')))
+                    
+            max_52w = max(recent_52w_highs) if recent_52w_highs else max_all_time
+            
+            status = ""
+            if current_close >= max_all_time:
+                status = "역·신"
+            elif current_close >= max_all_time * 0.9:
+                status = "역·근"
+            elif current_close >= max_52w:
+                status = "52·신"
+            elif current_close >= max_52w * 0.9:
+                status = "52·근"
+                
+            res['new_high_status'] = status
+        except Exception:
+            pass
+
+    def fetch_current_prices(self, identifiers: List[str], target_date: date) -> Dict[str, int]:
+        target_date_str = target_date.strftime("%Y%m%d")
+        print(f"[KRX Adapter] Batch fetching prices for {len(identifiers)} stocks...")
+        
+        items = self._fetch_all_markets(target_date_str)
+        if not items:
+            return {}
+            
+        code_to_price = {}
+        name_to_price = {}
+        
+        for row in items:
+            close_prc = int(self._parse_num(row.get('TDD_CLSPRC', '0')))
+            code_to_price[row.get('ISU_SRT_CD', '')] = close_prc
+            name_to_price[row.get('ISU_ABBRV', '')] = close_prc
+            
+        results = {}
+        for ident in identifiers:
+            if ident in name_to_price:
+                results[ident] = name_to_price[ident]
+            elif ident in code_to_price:
+                results[ident] = code_to_price[ident]
+                
+        return results
+
+    def fetch_ohlcv_bulk(self, tickers: List[str], start_date: date, end_date: date) -> Dict[str, Any]:
+        """여러 종목의 기간별 OHLCV를 병렬로 수집합니다. (현재는 순차 구현)"""
+        import pandas as pd
+        start_str = start_date.strftime("%Y%m%d")
+        end_str = end_date.strftime("%Y%m%d")
+        results = {}
+        
+        print(f"[KRX Adapter] Fetching OHLCV for {len(tickers)} stocks ({start_str}~{end_str})...")
+        
+        # 1. Map tickers (short codes) to standard codes (isuCd) using end_date market data
+        market_data = self._fetch_all_markets(end_str)
+        ticker_to_isucd = {}
+        for row in market_data:
+            ticker_to_isucd[row.get('ISU_SRT_CD')] = row.get('ISU_CD')
+            
+        url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+        headers = {
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Origin': self.BASE_URL,
+            'Referer': f'{self.BASE_URL}/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201',
+            'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+        
+        for ticker in tickers:
+            isu_cd = ticker_to_isucd.get(ticker)
+            if not isu_cd:
+                # Fallback to appending 'A' if not found (might fail but worth trying)
+                isu_cd = f"A{ticker}"
+                
+            payload = {
+                'bld': 'dbms/MDC/STAT/standard/MDCSTAT01701',
+                'locale': 'ko_KR',
+                'isuCd': isu_cd,
+                'isuSrtCd': ticker,
+                'strtDd': start_str,
+                'endDd': end_str,
+                'adjStkPrc_isNo': 'Y',
+                'share': '1',
+                'money': '1',
+                'csvxls_isNo': 'false',
+            }
+            try:
+                resp = self.session.post(url, headers=headers, data=payload)
+                data = resp.json().get('output', [])
+                if not data:
+                    continue
+                
+                # Pykrx 통일성 유지: ['시가', '고가', '저가', '종가', '거래량', '거래대금', '등락률']
+                records = []
+                for row in data:
+                    trd_dd = row.get('TRD_DD', '').replace('/', '')
+                    if not trd_dd: continue
+                    records.append({
+                        '날짜': pd.to_datetime(trd_dd, format="%Y%m%d"),
+                        '시가': int(self._parse_num(row.get('TDD_OPNPRC', '0'))),
+                        '고가': int(self._parse_num(row.get('TDD_HGPRC', '0'))),
+                        '저가': int(self._parse_num(row.get('TDD_LWPRC', '0'))),
+                        '종가': int(self._parse_num(row.get('TDD_CLSPRC', '0'))),
+                        '거래량': int(self._parse_num(row.get('ACC_TRDVOL', '0'))),
+                        '거래대금': int(self._parse_num(row.get('ACC_TRDVAL', '0'))),
+                        '등락률': self._parse_num(row.get('FLUC_RT', '0'))
+                    })
+                
+                df = pd.DataFrame(records)
+                if not df.empty:
+                    df.set_index('날짜', inplace=True)
+                    df.sort_index(inplace=True)
+                    results[ticker] = df
+            except Exception:
+                pass
+
+        return results
+
+    def _get_trading_days(self, start_str: str, end_str: str) -> List[date]:
+        """삼성전자(005930) 시세 추이를 이용해 거래일 목록을 추출합니다."""
+        import datetime
+        url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+        headers = {
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Origin': self.BASE_URL,
+            'Referer': f'{self.BASE_URL}/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201',
+            'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            'X-Requested-With': 'XMLHttpRequest'
+        }
+        payload = {
+            'bld': 'dbms/MDC/STAT/standard/MDCSTAT01701',
+            'locale': 'ko_KR',
+            'isuCd': 'KR7005930003', # 삼성전자
+            'isuSrtCd': '005930',
+            'strtDd': start_str,
+            'endDd': end_str,
+            'adjStkPrc_isNo': 'Y',
+            'share': '1',
+            'money': '1',
+            'csvxls_isNo': 'false',
+        }
+        try:
+            resp = self.session.post(url, headers=headers, data=payload)
+            data = resp.json().get('output', [])
+            
+            days = []
+            for row in data:
+                trd_str = row.get('TRD_DD', '').replace('/', '')
+                if trd_str:
+                    days.append(datetime.datetime.strptime(trd_str, "%Y%m%d").date())
+            # API 반환이 최신순일 수 있으므로 오름차순 정렬
+            return sorted(days)
+        except Exception:
+            return []
+
+    def fetch_candidates_in_range(self, start_date: date, end_date: date) -> Dict[date, List[Dict[str, Any]]]:
+        start_str = start_date.strftime("%Y%m%d")
+        end_str = end_date.strftime("%Y%m%d")
+        
+        trading_days = self._get_trading_days(start_str, end_str)
+        print(f"[KRX Adapter] Found {len(trading_days)} trading days in range.")
+        
+        results = {}
+        for d in trading_days:
+            d_str = d.strftime("%Y%m%d")
+            items = self._fetch_all_markets(d_str)
+            if not items:
+                continue
+                
+            day_res = []
+            for row in items:
+                fluc_rt = self._parse_num(row.get('FLUC_RT', '0'))
+                close_prc = int(self._parse_num(row.get('TDD_CLSPRC', '0')))
+                
+                if 29.5 <= fluc_rt <= 30.5 and close_prc > 0:
+                    day_res.append({
+                        'name': row.get('ISU_ABBRV', ''),
+                        'code': row.get('ISU_SRT_CD', ''),
+                        'close': close_prc,
+                        'rate': round(fluc_rt / 100, 4)
+                    })
+            
+            if day_res:
+                results[d] = day_res
+                
+        return results
