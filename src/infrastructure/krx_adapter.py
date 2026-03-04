@@ -146,71 +146,88 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
 
     def _analyze_new_high(self, res: dict, target_date_str: str):
         """특정 종목의 과거 시세(MDCSTAT01701)를 호출해 신고가 여부를 판단합니다."""
+        import datetime
+        from datetime import timedelta
+        
         url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
         headers = {
             'Accept': 'application/json, text/javascript, */*; q=0.01',
             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             'Origin': self.BASE_URL,
             'Referer': f'{self.BASE_URL}/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             'X-Requested-With': 'XMLHttpRequest'
         }
-        payload = {
-            'bld': 'dbms/MDC/STAT/standard/MDCSTAT01701',
-            'locale': 'ko_KR',
-            'isuCd': res['_isu_cd'],
-            'isuSrtCd': res['code'],
-            'strtDd': '19900101', # Pykrx에서 사용하던 조회범위
-            'endDd': target_date_str,
-            'adjStkPrc_isNo': 'Y', 
-            'share': '1',
-            'money': '1',
-            'csvxls_isNo': 'false',
-        }
         
-        try:
-            resp = self.session.post(url, headers=headers, data=payload)
-            history = resp.json().get('output', [])
-            if not history:
-                return
-                
-            # history is sorted usually descending or ascending, but we parse it into a list of highs
-            high_prices = [self._parse_num(d.get('TDD_HGPRC', '0')) for d in history if d.get('TDD_HGPRC')]
-            if not high_prices:
-                return
-                
-            max_all_time = max(high_prices)
-            current_close = res['close']
+        target_dt = datetime.datetime.strptime(target_date_str, "%Y%m%d")
+        start_dt = datetime.datetime(1990, 1, 1)
+        
+        date_chunks = []
+        cur_start = start_dt
+        while cur_start <= target_dt:
+            cur_end = min(cur_start + timedelta(days=730), target_dt)
+            date_chunks.append((cur_start.strftime("%Y%m%d"), cur_end.strftime("%Y%m%d")))
+            cur_start = cur_end + timedelta(days=1)
             
-            # Calculate 52w high (approx 250 trading days or just grab last 1 year from strings)
-            # data returns 'TRD_DD': '2026/03/03'. We can filter this simply.
-            import datetime
-            target_dt = datetime.datetime.strptime(target_date_str, "%Y%m%d")
-            cutoff_52w = target_dt - datetime.timedelta(days=365)
+        all_time_highs = []
+        recent_52w_highs = []
+        cutoff_52w = target_dt - timedelta(days=365)
+        
+        import time
+        for chunk_start, chunk_end in date_chunks:
+            payload = {
+                'bld': 'dbms/MDC/STAT/standard/MDCSTAT01701',
+                'locale': 'ko_KR',
+                'isuCd': res['_isu_cd'],
+                'isuSrtCd': res['code'],
+                'strtDd': chunk_start,
+                'endDd': chunk_end,
+                'adjStkPrc_isNo': 'Y', 
+                'share': '1',
+                'money': '1',
+                'csvxls_isNo': 'false',
+            }
             
-            recent_52w_highs = []
-            for row in history:
-                trd_str = row.get('TRD_DD', '').replace('/', '')
-                if not trd_str: continue
-                trd_dt = datetime.datetime.strptime(trd_str, "%Y%m%d")
-                if trd_dt >= cutoff_52w:
-                    recent_52w_highs.append(self._parse_num(row.get('TDD_HGPRC', '0')))
+            try:
+                resp = self.session.post(url, headers=headers, data=payload, timeout=15)
+                history = resp.json().get('output', [])
+                time.sleep(0.5) # Prevent KRX ban
+                if not history:
+                    continue
                     
-            max_52w = max(recent_52w_highs) if recent_52w_highs else max_all_time
-            
-            status = ""
-            if current_close >= max_all_time:
-                status = "역·신"
-            elif current_close >= max_all_time * 0.9:
-                status = "역·근"
-            elif current_close >= max_52w:
-                status = "52·신"
-            elif current_close >= max_52w * 0.9:
-                status = "52·근"
+                for row in history:
+                    hg_prc_str = row.get('TDD_HGPRC')
+                    if not hg_prc_str: continue
+                    val = self._parse_num(hg_prc_str)
+                    all_time_highs.append(val)
+                    
+                    trd_str = row.get('TRD_DD', '').replace('/', '')
+                    if not trd_str: continue
+                    trd_dt = datetime.datetime.strptime(trd_str, "%Y%m%d")
+                    if trd_dt >= cutoff_52w:
+                        recent_52w_highs.append(val)
+            except Exception:
+                time.sleep(1.0) # Backoff on error
+                pass
                 
-            res['new_high_status'] = status
-        except Exception:
-            pass
+        if not all_time_highs:
+            return
+            
+        max_all_time = max(all_time_highs)
+        max_52w = max(recent_52w_highs) if recent_52w_highs else max_all_time
+        current_close = res['close']
+        
+        status = ""
+        if current_close >= max_all_time:
+            status = "역·신"
+        elif current_close >= max_all_time * 0.9:
+            status = "역·근"
+        elif current_close >= max_52w:
+            status = "52·신"
+        elif current_close >= max_52w * 0.9:
+            status = "52·근"
+            
+        res['new_high_status'] = status
 
     def fetch_current_prices(self, identifiers: List[str], target_date: date) -> Dict[str, int]:
         target_date_str = target_date.strftime("%Y%m%d")
@@ -238,8 +255,12 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
         return results
 
     def fetch_ohlcv_bulk(self, tickers: List[str], start_date: date, end_date: date) -> Dict[str, Any]:
-        """여러 종목의 기간별 OHLCV를 병렬로 수집합니다. (현재는 순차 구현)"""
+        """여러 종목의 기간별 OHLCV를 병렬로 수집합니다. (현재는 순차/청크 구현)
+        KRX MDCSTAT01701 API는 1회 통신에 최대 2년(약 731일)의 범위만 허용하므로
+        시작~종료일까지 2년 단위로 청크를 나누어 연속 호출합니다.
+        """
         import pandas as pd
+        from datetime import timedelta
         start_str = start_date.strftime("%Y%m%d")
         end_str = end_date.strftime("%Y%m%d")
         results = {}
@@ -262,53 +283,67 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
             'X-Requested-With': 'XMLHttpRequest'
         }
         
+        # 날짜를 2년 단위로 쪼개기
+        date_chunks = []
+        cur_start = start_date
+        while cur_start <= end_date:
+            cur_end = min(cur_start + timedelta(days=730), end_date)
+            date_chunks.append((cur_start.strftime("%Y%m%d"), cur_end.strftime("%Y%m%d")))
+            cur_start = cur_end + timedelta(days=1)
+        
         for ticker in tickers:
             isu_cd = ticker_to_isucd.get(ticker)
             if not isu_cd:
-                # Fallback to appending 'A' if not found (might fail but worth trying)
                 isu_cd = f"A{ticker}"
                 
-            payload = {
-                'bld': 'dbms/MDC/STAT/standard/MDCSTAT01701',
-                'locale': 'ko_KR',
-                'isuCd': isu_cd,
-                'isuSrtCd': ticker,
-                'strtDd': start_str,
-                'endDd': end_str,
-                'adjStkPrc_isNo': 'Y',
-                'share': '1',
-                'money': '1',
-                'csvxls_isNo': 'false',
-            }
-            try:
-                resp = self.session.post(url, headers=headers, data=payload)
-                data = resp.json().get('output', [])
-                if not data:
-                    continue
-                
-                # Pykrx 통일성 유지: ['시가', '고가', '저가', '종가', '거래량', '거래대금', '등락률']
-                records = []
-                for row in data:
-                    trd_dd = row.get('TRD_DD', '').replace('/', '')
-                    if not trd_dd: continue
-                    records.append({
-                        '날짜': pd.to_datetime(trd_dd, format="%Y%m%d"),
-                        '시가': int(self._parse_num(row.get('TDD_OPNPRC', '0'))),
-                        '고가': int(self._parse_num(row.get('TDD_HGPRC', '0'))),
-                        '저가': int(self._parse_num(row.get('TDD_LWPRC', '0'))),
-                        '종가': int(self._parse_num(row.get('TDD_CLSPRC', '0'))),
-                        '거래량': int(self._parse_num(row.get('ACC_TRDVOL', '0'))),
-                        '거래대금': int(self._parse_num(row.get('ACC_TRDVAL', '0'))),
-                        '등락률': self._parse_num(row.get('FLUC_RT', '0'))
-                    })
-                
-                df = pd.DataFrame(records)
-                if not df.empty:
-                    df.set_index('날짜', inplace=True)
-                    df.sort_index(inplace=True)
-                    results[ticker] = df
-            except Exception:
-                pass
+            all_records = []
+            
+            for chunk_start, chunk_end in date_chunks:
+                payload = {
+                    'bld': 'dbms/MDC/STAT/standard/MDCSTAT01701',
+                    'locale': 'ko_KR',
+                    'isuCd': isu_cd,
+                    'isuSrtCd': ticker,
+                    'strtDd': chunk_start,
+                    'endDd': chunk_end,
+                    'adjStkPrc_isNo': 'Y',
+                    'share': '1',
+                    'money': '1',
+                    'csvxls_isNo': 'false',
+                }
+                try:
+                    import time
+                    resp = self.session.post(url, headers=headers, data=payload, timeout=15)
+                    data = resp.json().get('output', [])
+                    time.sleep(0.5) # Prevent KRX ban
+                    if not data:
+                        continue
+                    
+                    for row in data:
+                        trd_dd = row.get('TRD_DD', '').replace('/', '')
+                        if not trd_dd: continue
+                        all_records.append({
+                            '날짜': pd.to_datetime(trd_dd, format="%Y%m%d"),
+                            '시가': int(self._parse_num(row.get('TDD_OPNPRC', '0'))),
+                            '고가': int(self._parse_num(row.get('TDD_HGPRC', '0'))),
+                            '저가': int(self._parse_num(row.get('TDD_LWPRC', '0'))),
+                            '종가': int(self._parse_num(row.get('TDD_CLSPRC', '0'))),
+                            '거래량': int(self._parse_num(row.get('ACC_TRDVOL', '0'))),
+                            '거래대금': int(self._parse_num(row.get('ACC_TRDVAL', '0'))),
+                            '등락률': self._parse_num(row.get('FLUC_RT', '0'))
+                        })
+                except Exception:
+                    import time
+                    time.sleep(1.0) # Backoff on error
+                    pass
+            
+            if all_records:
+                df = pd.DataFrame(all_records)
+                # 데이터가 여러 청크에서 왔으므로 중복 제거 후 정렬
+                df.drop_duplicates(subset=['날짜'], inplace=True)
+                df.set_index('날짜', inplace=True)
+                df.sort_index(inplace=True)
+                results[ticker] = df
 
         return results
 
