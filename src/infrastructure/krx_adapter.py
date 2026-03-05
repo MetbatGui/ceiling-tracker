@@ -1,18 +1,26 @@
+"""KRX(한국거래소) 정보데이터시스템에서 주식 데이터를 수집하는 어댑터입니다.
+
+이 모듈은 HTTP 요청을 통해 KRX 상한가 소스 및 가격 정보를 직접 스크래핑합니다.
+"""
 import os
-import requests
-from typing import List, Dict, Any
+import requests  # type: ignore
+from typing import List, Dict, Any, Optional
 from datetime import date
 from src.domain.ports import StockDataProvider
 
 class KrxDirectStockInfoAdapter(StockDataProvider):
-    """
-    KRX 정보데이터시스템(data.krx.co.kr)에서 직접 데이터를 스크래핑하는 어댑터입니다.
-    """
+    """KRX 정보데이터시스템(data.krx.co.kr)에서 직접 데이터를 스크래핑하는 어댑터."""
     
     BASE_URL = "https://data.krx.co.kr"
     LOGIN_URL = f"{BASE_URL}/contents/MDC/COMS/client/MDCCOMS001D1.cmd"
     
-    def __init__(self, mbr_id: str = None, pw: str = None):
+    def __init__(self, mbr_id: Optional[str] = None, pw: Optional[str] = None):
+        """저장소를 초기화하고 KRX 세션을 획득합니다.
+
+        Args:
+            mbr_id: KRX 정보데이터시스템 사용자 ID.
+            pw: KRX 정보데이터시스템 비밀번호.
+        """
         self.mbr_id = mbr_id or os.getenv("KRX_USERNAME")
         self.pw = pw or os.getenv("KRX_PASSWORD")
         
@@ -23,8 +31,7 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
         self._login()
 
     def _login(self) -> None:
-        """
-        KRX 정보데이터시스템 로그인 후 세션 쿠키(JSESSIONID)를 갱신합니다.
+        """KRX 정보데이터시스템 로그인 후 세션 쿠키(JSESSIONID)를 갱신합니다.
         
         로그인 흐름:
           1. GET MDCCOMS001.cmd  → 초기 JSESSIONID 발급
@@ -110,6 +117,14 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
             return 0.0
 
     def fetch_today_ceiling_stocks(self, target_date: date) -> List[Dict[str, Any]]:
+        """해당 날짜의 전종목 시세를 조회하여 상한가 종목을 추출합니다.
+
+        Args:
+            target_date: 조회할 날짜.
+
+        Returns:
+            상한가 종목 정보 리스트.
+        """
         target_date_str = target_date.strftime("%Y%m%d")
         print(f"[KRX Adapter] Fetching market data for {target_date}...")
         
@@ -230,6 +245,15 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
         res['new_high_status'] = status
 
     def fetch_current_prices(self, identifiers: List[str], target_date: date) -> Dict[str, int]:
+        """주어진 종목들의 특정 날짜 종가를 일괄 조회합니다.
+
+        Args:
+            identifiers: 종목명 또는 종목코드 리스트.
+            target_date: 조회할 날짜.
+
+        Returns:
+            {종목명: 종가} 형태의 매핑 데이터.
+        """
         target_date_str = target_date.strftime("%Y%m%d")
         print(f"[KRX Adapter] Batch fetching prices for {len(identifiers)} stocks...")
         
@@ -255,7 +279,8 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
         return results
 
     def fetch_ohlcv_bulk(self, tickers: List[str], start_date: date, end_date: date) -> Dict[str, Any]:
-        """여러 종목의 기간별 OHLCV를 병렬로 수집합니다. (현재는 순차/청크 구현)
+        """여러 종목의 기간별 OHLCV를 병렬로 수집합니다. (현재는 순차/청크 구현).
+
         KRX MDCSTAT01701 API는 1회 통신에 최대 2년(약 731일)의 범위만 허용하므로
         시작~종료일까지 2년 단위로 청크를 나누어 연속 호출합니다.
         """
@@ -347,6 +372,13 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
 
         return results
 
+    def get_trading_days(self, start_date: date, end_date: date) -> List[date]:
+        """두 날짜 사이의 실제 거래일 목록을 반환합니다. (삼성전자 시세 기준)."""
+        import datetime
+        start_str = start_date.strftime("%Y%m%d") if isinstance(start_date, date) else start_date
+        end_str   = end_date.strftime("%Y%m%d")   if isinstance(end_date, date) else end_date
+        return self._get_trading_days(start_str, end_str)
+
     def _get_trading_days(self, start_str: str, end_str: str) -> List[date]:
         """삼성전자(005930) 시세 추이를 이용해 거래일 목록을 추출합니다."""
         import datetime
@@ -386,6 +418,15 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
             return []
 
     def fetch_candidates_in_range(self, start_date: date, end_date: date) -> Dict[date, List[Dict[str, Any]]]:
+        """특정 기간 동안의 모든 상한가 종목 후보를 날짜별로 수집합니다.
+
+        Args:
+            start_date: 시작 날짜.
+            end_date: 종료 날짜.
+
+        Returns:
+            {날짜: [상한가_종목_정보]} 형태의 매핑 데이터.
+        """
         start_str = start_date.strftime("%Y%m%d")
         end_str = end_date.strftime("%Y%m%d")
         

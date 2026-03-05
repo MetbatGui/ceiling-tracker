@@ -1,11 +1,10 @@
-"""
-도메인 상수 정의
+"""도메인 상수 정의.
 
 비즈니스 규칙과 관련된 상수들을 중앙 집중식으로 관리합니다.
 """
 
 class TradingConstants:
-    """주식 거래 관련 상수"""
+    """주식 거래 관련 상수."""
     
     # 상한가 기준
     CEILING_RATE_MIN = 0.295  # 29.5%
@@ -30,7 +29,7 @@ class TradingConstants:
 
 
 class ExcelConstants:
-    """Excel 출력 관련 상수"""
+    """Excel 출력 관련 상수."""
     
     # 컬럼 너비
     COLUMN_WIDTH_NAME = 12  # 종목명 컬럼

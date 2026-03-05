@@ -1,3 +1,7 @@
+"""상한가 추적 도메인의 핵심 모델(Entity, Value Object, Aggregate Root)을 정의합니다.
+
+이 모듈은 상한가 종목과 그들의 가격 이력을 관리하는 비즈니스 로직을 포함합니다.
+"""
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
 from datetime import date
@@ -100,7 +104,7 @@ class TrackedStock:
         last_price = self.initial_price
         
         for d in sorted_dates:
-            if d <= self.cohort_date:
+            if self.cohort_date and d <= self.cohort_date:
                 continue
             
             price = self.price_history[d]

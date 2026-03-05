@@ -1,8 +1,17 @@
+"""도메인 계층의 추상 인터페이스(Port)를 정의합니다.
+
+이 모듈은 외부 시스템(KRX, DB, 파일 시스템 등)과의 통신을 위한 인터페이스를 정의하여
+비즈니스 로직이 특정 구현 기술에 종속되지 않도록 합니다.
+"""
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
 from datetime import date
 import pandas as pd
 import openpyxl
+
+if TYPE_CHECKING:
+    from src.domain.model import CeilingCohort
+
 
 class StockDataProvider(ABC):
     """주식 데이터 제공을 위한 추상 기본 클래스(Port)입니다."""
@@ -35,6 +44,19 @@ class StockDataProvider(ABC):
         """기간 내 모든 거래일의 상한가 후보군을 병렬로 수집합니다."""
         pass
 
+    @abstractmethod
+    def get_trading_days(self, start_date: date, end_date: date) -> List[date]:
+        """두 날짜 사이의 실제 거래일 목록을 반환합니다.
+
+        Args:
+            start_date: 시작 날짜 (포함)
+            end_date: 종료 날짜 (포함)
+
+        Returns:
+            거래일 날짜 리스트 (오름차순)
+        """
+        pass
+
 
 class CohortRepository(ABC):
     """코호트 데이터를 저장하고 불러오는 추상 클래스(Port)입니다.
@@ -45,10 +67,17 @@ class CohortRepository(ABC):
 
     @abstractmethod
     def save_cohort(self, cohort: 'CeilingCohort') -> None:
-        """코호트를 저장합니다. 기존 데이터와 병합하여 덮어쓰지 않습니다.
+        """코호트를 저장합니다. 기존 데이터와 병합하여 덮어쓰지 않습니다."""
+        pass
+
+    @abstractmethod
+    def save_cohorts_batch(self, cohorts: List['CeilingCohort']) -> None:
+        """여러 코호트를 한 번의 I/O로 배치 저장합니다.
+
+        save_cohort를 반복 호출하는 것보다 훨씬 빠릅니다.
 
         Args:
-            cohort (CeilingCohort): 저장할 코호트 객체
+            cohorts: 저장할 CeilingCohort 리스트
         """
         pass
 
@@ -97,7 +126,7 @@ class StoragePort(ABC):
 
     @abstractmethod
     def save_workbook(self, book: openpyxl.Workbook, path: str) -> bool:
-        """openpyxl Workbook을 저장합니다."""
+        """Openpyxl Workbook을 저장합니다."""
         pass
 
     @abstractmethod

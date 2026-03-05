@@ -1,3 +1,7 @@
+"""상한가 추적 시스템의 명령행 인터페이스(CLI)를 정의합니다.
+
+이 모듈은 데이터 수집(daily-update), 범위 업데이트(range-update), 엑셀 내보내기(export-excel) 등의 명령을 제공합니다.
+"""
 import click
 from datetime import date, datetime
 import sys
@@ -13,21 +17,20 @@ sys.path.insert(0, root_path)
 
 # Windows Console Encoding Fix
 if sys.platform.startswith('win'):
-    sys.stdout.reconfigure(encoding='utf-8')
+    from typing import Any
+    (sys.stdout).reconfigure(encoding='utf-8')  # type: ignore[attr-defined, union-attr]
 
 try:
     from src.infrastructure.krx_adapter import KrxDirectStockInfoAdapter
-    from src.infrastructure.repository import ParquetCohortRepository, ExcelExporter
+    from src.infrastructure.repository import ParquetCohortRepository
     from src.infrastructure.storage_adapters import LocalStorageAdapter, GoogleDriveAdapter
-    from src.application.service import DailyUpdateService, RangeUpdateService
+    from src.infrastructure.excel_renderer import ExcelRenderer
+    from src.application.daily_update_service import DailyUpdateService
+    from src.application.range_update_service import RangeUpdateService
+    from src.application.excel_export_service import ExcelExportService
 except ImportError as e:
-    try:
-        from infrastructure.krx_adapter import KrxDirectStockInfoAdapter
-        from infrastructure.repository import ParquetCohortRepository, ExcelExporter
-        from infrastructure.storage_adapters import LocalStorageAdapter, GoogleDriveAdapter
-        from application.service import DailyUpdateService, RangeUpdateService
-    except ImportError:
-        raise e
+    # 레거시 경로 대응 (필요한 경우)
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +82,7 @@ def _dual_save_workbook(wb, filename: str, storage):
 
 @click.group()
 def cli():
-    """상한가 추적 시스템 CLI"""
+    """상한가 추적 시스템 CLI."""
     pass
 
 
@@ -123,24 +126,8 @@ def daily_update(target_date_str, use_drive):
     try:
         service.execute_daily_update(target_date)
         click.echo("✅ Parquet 데이터 업데이트 완료")
-
-        # 자동 엑셀 export 수행
-        click.echo("📊 엑셀 리포트 생성 중...")
-        year = target_date.year
-        start_date = date(year, 1, 1)
-        # 리포트 내의 '추적 날짜' 기준을 target_date(오늘)로 설정
-        cohorts = repo.load_cohorts_in_range(start_date, date(year, 12, 31))
-
-        if cohorts:
-            exporter = ExcelExporter()
-            wb = exporter.export(cohorts, end_date=target_date)
-            output_file = f"상한가분석({year}년).xlsx"
-            _dual_save_workbook(wb, output_file, storage)
-            click.echo(f"✅ 엑셀 리포트 업데이트 완료: {output_file}")
-        else:
-            click.echo("⚠️ 내보낼 코호트 데이터가 없습니다.")
-
         click.echo("✨ Daily Update Completed Successfully")
+        click.echo(" 리포트 생성: uv run python src/cli.py export-excel --year " + str(target_date.year))
     except Exception as e:
         click.echo(f"❌ Error during update: {e}")
         import traceback
@@ -313,20 +300,21 @@ def export_excel(year, start_date_str, end_date_str, file_path, use_drive):
 
     # Parquet에서 코호트 로드
     repo = _build_repo(storage)
-    cohorts = repo.load_cohorts_in_range(start_date, end_date)
+    provider = KrxDirectStockInfoAdapter()
+    renderer = ExcelRenderer()
 
-    if not cohorts:
-        click.echo("⚠️ 해당 기간의 데이터가 없습니다. range-update 또는 annual-update 먼저 실행하세요.")
-        return
+    service = ExcelExportService(repo, provider, renderer, storage)
+    ok = service.generate_report(start_date, end_date, output_file)
 
-    click.echo(f"📊 {len(cohorts)}개 코호트 로드 완료. 엑셀 생성 중...")
+    # Drive 사용 시 로컬 백업 추가 저장
+    if ok and use_drive:
+        local_storage = LocalStorageAdapter(
+            base_path=os.getenv("LOCAL_STORAGE_BASE_PATH", "data")
+        )
+        local_service = ExcelExportService(repo, provider, renderer, local_storage)
+        local_service.generate_report(start_date, end_date, output_file)
+        click.echo(f"💾 로컬 백업 완료")
 
-    # ExcelExporter로 Workbook 생성
-    exporter = ExcelExporter()
-    wb = exporter.export(cohorts, end_date=end_date)
-
-    # 저장 (로컬 백업 포함)
-    ok = _dual_save_workbook(wb, output_file, storage)
     if ok:
         click.echo(f"✅ 엑셀 리포트 생성 완료: {output_file}")
     else:

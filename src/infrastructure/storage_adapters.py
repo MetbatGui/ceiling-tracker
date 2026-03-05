@@ -1,5 +1,4 @@
-"""
-저장소 어댑터 구현
+"""저장소 어댑터 구현.
 
 StoragePort를 구현하여 로컬 파일 시스템 및 Google Drive에 데이터를 저장합니다.
 """
@@ -79,7 +78,7 @@ class LocalStorageAdapter(StoragePort):
             return False
     
     def save_workbook(self, book: openpyxl.Workbook, path: str) -> bool:
-        """openpyxl Workbook을 저장합니다.
+        """Openpyxl Workbook을 저장합니다.
 
         Args:
             book (openpyxl.Workbook): 저장할 Workbook 객체.
@@ -447,7 +446,7 @@ class GoogleDriveAdapter(StoragePort):
             return False
 
     def save_workbook(self, book: openpyxl.Workbook, path: str) -> bool:
-        """openpyxl Workbook 저장 (업로드).
+        """Openpyxl Workbook 저장 (업로드).
         
         Args:
             book (openpyxl.Workbook): 저장할 Workbook.
