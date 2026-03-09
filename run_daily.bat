@@ -2,11 +2,6 @@
 chcp 65001 > nul
 cd /d "%~dp0"
 
-echo ================================================
-echo  상한가 추적 일일 자동화
-echo ================================================
-echo.
-
 echo === [1/2] 데이터 수집 (daily-update) ===
 uv run python src/cli.py daily-update
 if errorlevel 1 (
@@ -25,9 +20,3 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-
-echo.
-echo ================================================
-echo  완료
-echo ================================================
-pause
