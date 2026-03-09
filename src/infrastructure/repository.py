@@ -3,13 +3,10 @@
 이 모듈은 Parquet 기반의 메뉴 저장소와 마이그레이션을 위한 레거시 엑셀 저장소를 포함합니다.
 """
 import pandas as pd
-import io
-import os
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict
-import openpyxl
 from src.domain.ports import CohortRepository, StoragePort
-from src.domain.model import CeilingCohort, Stock, TrackedStock
+from src.domain.model import CeilingCohort
 
 
 # ---------------------------------------------------------------------------
@@ -207,14 +204,15 @@ class ParquetCohortRepository(CohortRepository):
         """Tidy DataFrame을 CeilingCohort 리스트로 복원합니다."""
         cohorts: Dict[date, CeilingCohort] = {}
 
-        for cohort_date_ts, cohort_df in df.groupby('cohort_date'):
-            cohort_date = cohort_date_ts.date()
+        for cohort_date_val, cohort_df in df.groupby('cohort_date'):
+            cohort_date = pd.to_datetime(str(cohort_date_val)).date()
             cohort = CeilingCohort(cohort_date=cohort_date)
 
-            for stock_code, stock_df in cohort_df.groupby('stock_code'):
+            for stock_code_val, stock_df in cohort_df.groupby('stock_code'):
                 first_row = stock_df.iloc[0]
-                stock_name = first_row['stock_name']
-                new_high_status = first_row['new_high_status']
+                stock_name = str(first_row['stock_name'])
+                stock_code = str(stock_code_val)
+                new_high_status = str(first_row['new_high_status'])
                 initial_price = int(first_row['initial_price'])
 
                 cohort.add_stock(stock_name, stock_code, initial_price, new_high_status)
