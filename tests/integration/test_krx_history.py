@@ -1,4 +1,3 @@
-import os
 import datetime
 from dotenv import load_dotenv
 from src.infrastructure.krx_adapter import KrxDirectStockInfoAdapter
