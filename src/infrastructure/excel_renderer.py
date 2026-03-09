@@ -56,7 +56,7 @@ class ExcelRenderer:
                           trading_days: List[date],
                           end_date: Optional[date]) -> openpyxl.Workbook:
         """Workbook에 코호트 시트를 추가합니다."""
-        date_slots = self._calculate_date_slots(cohort, trading_days)
+        date_slots = self._calculate_date_slots(cohort, trading_days, end_date)
         headers = self._create_headers(date_slots)
 
         stocks_data = cohort.get_stocks_data()
@@ -79,9 +79,17 @@ class ExcelRenderer:
     # ------------------------------------------------------------------
 
     def _calculate_date_slots(self, cohort: CeilingCohort,
-                               trading_days: List[date]) -> List[Optional[date]]:
-        """코호트 당일 이후의 거래일을 D+0~D+9 슬롯으로 잘라냅니다."""
+                               trading_days: List[date],
+                               end_date: Optional[date] = None) -> List[Optional[date]]:
+        """코호트 당일 이후의 거래일을 D+0~D+9 슬롯으로 잘라냅니다.
+        단, end_date가 주어지면 그 날짜까지만 슬롯을 노출합니다.
+        """
         cohort_trading_days = [d for d in trading_days if d >= cohort.cohort_date]
+        
+        # end_date가 제공되었다면 해당 일자까지만 포함
+        if end_date:
+            cohort_trading_days = [d for d in cohort_trading_days if d <= end_date]
+            
         date_slots: List[Optional[date]] = [d for d in cohort_trading_days[:TradingConstants.FIXED_DATE_SLOTS]]
         while len(date_slots) < TradingConstants.FIXED_DATE_SLOTS:
             date_slots.append(None)

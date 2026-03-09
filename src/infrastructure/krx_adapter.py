@@ -160,89 +160,71 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
         return results
 
     def _analyze_new_high(self, res: dict, target_date_str: str):
-        """특정 종목의 과거 시세(MDCSTAT01701)를 호출해 신고가 여부를 판단합니다."""
+        """특정 종목의 과거 시세를 네이버 금융 API(fchart)를 통해 호출해 신고가 여부를 판단합니다."""
         import datetime
         from datetime import timedelta
-        
-        url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
-        headers = {
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'Origin': self.BASE_URL,
-            'Referer': f'{self.BASE_URL}/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201',
-            'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            'X-Requested-With': 'XMLHttpRequest'
-        }
+        import xml.etree.ElementTree as ET
+        import requests
         
         target_dt = datetime.datetime.strptime(target_date_str, "%Y%m%d")
-        start_dt = datetime.datetime(1990, 1, 1)
-        
-        date_chunks = []
-        cur_start = start_dt
-        while cur_start <= target_dt:
-            cur_end = min(cur_start + timedelta(days=730), target_dt)
-            date_chunks.append((cur_start.strftime("%Y%m%d"), cur_end.strftime("%Y%m%d")))
-            cur_start = cur_end + timedelta(days=1)
-            
-        all_time_highs = []
-        recent_52w_highs = []
         cutoff_52w = target_dt - timedelta(days=365)
         
-        import time
-        for chunk_start, chunk_end in date_chunks:
-            payload = {
-                'bld': 'dbms/MDC/STAT/standard/MDCSTAT01701',
-                'locale': 'ko_KR',
-                'isuCd': res['_isu_cd'],
-                'isuSrtCd': res['code'],
-                'strtDd': chunk_start,
-                'endDd': chunk_end,
-                'adjStkPrc_isNo': 'Y', 
-                'share': '1',
-                'money': '1',
-                'csvxls_isNo': 'false',
-            }
-            
-            try:
-                resp = self.session.post(url, headers=headers, data=payload, timeout=15)
-                history = resp.json().get('output', [])
-                time.sleep(0.5) # Prevent KRX ban
-                if not history:
-                    continue
-                    
-                for row in history:
-                    hg_prc_str = row.get('TDD_HGPRC')
-                    if not hg_prc_str: continue
-                    val = self._parse_num(hg_prc_str)
-                    all_time_highs.append(val)
-                    
-                    trd_str = row.get('TRD_DD', '').replace('/', '')
-                    if not trd_str: continue
-                    trd_dt = datetime.datetime.strptime(trd_str, "%Y%m%d")
-                    if trd_dt >= cutoff_52w:
-                        recent_52w_highs.append(val)
-            except Exception:
-                time.sleep(1.0) # Backoff on error
-                pass
-                
-        if not all_time_highs:
-            return
-            
-        max_all_time = max(all_time_highs)
-        max_52w = max(recent_52w_highs) if recent_52w_highs else max_all_time
-        current_close = res['close']
+        # 네이버 금융 차트 API (수정주가 반영)
+        # count=3650 (약 15년치 거래일)
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={res['code']}&timeframe=day&count=3650&requestType=0"
         
-        status = ""
-        if current_close >= max_all_time:
-            status = "역·신"
-        elif current_close >= max_all_time * 0.9:
-            status = "역·근"
-        elif current_close >= max_52w:
-            status = "52·신"
-        elif current_close >= max_52w * 0.9:
-            status = "52·근"
+        try:
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            root = ET.fromstring(resp.text)
+            items = root.findall('.//item')
             
-        res['new_high_status'] = status
+            if not items:
+                return
+                
+            all_time_highs = []
+            recent_52w_highs = []
+            
+            for item in items:
+                data = item.attrib.get('data')
+                if not data:
+                    continue
+                # data format: YYYYMMDD|Open|High|Low|Close|Vol
+                parts = data.split('|')
+                if len(parts) >= 6:
+                    trd_dt = datetime.datetime.strptime(parts[0], "%Y%m%d")
+                    
+                    # 목표일(target_dt) 이후의 미래 데이터는 무시 (과거 복기 시 중요)
+                    if trd_dt > target_dt:
+                        continue
+                        
+                    high_prc = float(parts[2])
+                    all_time_highs.append(high_prc)
+                    
+                    if trd_dt >= cutoff_52w:
+                        recent_52w_highs.append(high_prc)
+                        
+            if not all_time_highs:
+                return
+                
+            max_all_time = max(all_time_highs)
+            max_52w = max(recent_52w_highs) if recent_52w_highs else max_all_time
+            current_close = res['close']
+            
+            status = ""
+            if current_close >= max_all_time:
+                status = "역·신"
+            elif current_close >= max_all_time * 0.9:
+                status = "역·근"
+            elif current_close >= max_52w:
+                status = "52·신"
+            elif current_close >= max_52w * 0.9:
+                status = "52·근"
+                
+            res['new_high_status'] = status
+            
+        except Exception as e:
+            print(f"[Warning] Failed to fetch Naver data for {res['name']}({res['code']}): {e}")
 
     def fetch_current_prices(self, identifiers: List[str], target_date: date) -> Dict[str, int]:
         """주어진 종목들의 특정 날짜 종가를 일괄 조회합니다.
@@ -279,102 +261,74 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
         return results
 
     def fetch_ohlcv_bulk(self, tickers: List[str], start_date: date, end_date: date) -> Dict[str, Any]:
-        """여러 종목의 기간별 OHLCV를 병렬로 수집합니다. (현재는 순차/청크 구현).
-
-        KRX MDCSTAT01701 API는 1회 통신에 최대 2년(약 731일)의 범위만 허용하므로
-        시작~종료일까지 2년 단위로 청크를 나누어 연속 호출합니다.
-        """
+        """여러 종목의 기간별 OHLCV를 네이버 금융 API 연동을 통해 수집합니다."""
         import pandas as pd
-        from datetime import timedelta
+        import xml.etree.ElementTree as ET
+        import requests
+        
         start_str = start_date.strftime("%Y%m%d")
         end_str = end_date.strftime("%Y%m%d")
         results = {}
         
-        print(f"[KRX Adapter] Fetching OHLCV for {len(tickers)} stocks ({start_str}~{end_str})...")
+        print(f"[KRX Adapter (Naver)] Fetching OHLCV for {len(tickers)} stocks ({start_str}~{end_str})...")
         
-        # 1. Map tickers (short codes) to standard codes (isuCd) using end_date market data
-        market_data = self._fetch_all_markets(end_str)
-        ticker_to_isucd = {}
-        for row in market_data:
-            ticker_to_isucd[row.get('ISU_SRT_CD')] = row.get('ISU_CD')
-            
-        url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
-        headers = {
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'Origin': self.BASE_URL,
-            'Referer': f'{self.BASE_URL}/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201',
-            'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            'X-Requested-With': 'XMLHttpRequest'
-        }
-        
-        # 날짜를 2년 단위로 쪼개기
-        date_chunks = []
-        cur_start = start_date
-        while cur_start <= end_date:
-            cur_end = min(cur_start + timedelta(days=730), end_date)
-            date_chunks.append((cur_start.strftime("%Y%m%d"), cur_end.strftime("%Y%m%d")))
-            cur_start = cur_end + timedelta(days=1)
-        
+        # 시작과 끝 기간 대략적 산정 (넉넉히 15년치 = 3650 영업일 호출)
+        # 네이버 API는 count 단위이므로 전체기간을 가져온 뒤 DataFrame 수준에서 필터링
         for ticker in tickers:
-            isu_cd = ticker_to_isucd.get(ticker)
-            if not isu_cd:
-                isu_cd = f"A{ticker}"
+            url = f"https://fchart.stock.naver.com/sise.nhn?symbol={ticker}&timeframe=day&count=3650&requestType=0"
+            try:
+                resp = requests.get(url, timeout=10)
+                resp.raise_for_status()
+                root = ET.fromstring(resp.text)
+                items = root.findall('.//item')
                 
-            all_records = []
-            
-            for chunk_start, chunk_end in date_chunks:
-                payload = {
-                    'bld': 'dbms/MDC/STAT/standard/MDCSTAT01701',
-                    'locale': 'ko_KR',
-                    'isuCd': isu_cd,
-                    'isuSrtCd': ticker,
-                    'strtDd': chunk_start,
-                    'endDd': chunk_end,
-                    'adjStkPrc_isNo': 'Y',
-                    'share': '1',
-                    'money': '1',
-                    'csvxls_isNo': 'false',
-                }
-                try:
-                    import time
-                    resp = self.session.post(url, headers=headers, data=payload, timeout=15)
-                    data = resp.json().get('output', [])
-                    time.sleep(0.5) # Prevent KRX ban
+                if not items:
+                    continue
+                    
+                all_records = []
+                for item in items:
+                    data = item.attrib.get('data')
                     if not data:
                         continue
-                    
-                    for row in data:
-                        trd_dd = row.get('TRD_DD', '').replace('/', '')
-                        if not trd_dd: continue
+                    parts = data.split('|')
+                    if len(parts) >= 6:
+                        # YYYYMMDD|Open|High|Low|Close|Vol
+                        dt_str = parts[0]
                         all_records.append({
-                            '날짜': pd.to_datetime(trd_dd, format="%Y%m%d"),
-                            '시가': int(self._parse_num(row.get('TDD_OPNPRC', '0'))),
-                            '고가': int(self._parse_num(row.get('TDD_HGPRC', '0'))),
-                            '저가': int(self._parse_num(row.get('TDD_LWPRC', '0'))),
-                            '종가': int(self._parse_num(row.get('TDD_CLSPRC', '0'))),
-                            '거래량': int(self._parse_num(row.get('ACC_TRDVOL', '0'))),
-                            '거래대금': int(self._parse_num(row.get('ACC_TRDVAL', '0'))),
-                            '등락률': self._parse_num(row.get('FLUC_RT', '0'))
+                            '날짜': pd.to_datetime(dt_str, format="%Y%m%d"),
+                            '시가': int(parts[1]),
+                            '고가': int(parts[2]),
+                            '저가': int(parts[3]),
+                            '종가': int(parts[4]),
+                            '거래량': int(parts[5]),
+                            '거래대금': 0, # fchart는 거래대금을 주지 않으므로 0으로 처리 (일반적으로 사용되지 않음)
+                            '등락률': 0.0 # Pandas에서 추후 계산 (또는 기존 로직 호환 위해 임의의 0)
                         })
-                except Exception:
-                    import time
-                    time.sleep(1.0) # Backoff on error
-                    pass
-            
-            if all_records:
-                df = pd.DataFrame(all_records)
-                # 데이터가 여러 청크에서 왔으므로 중복 제거 후 정렬
-                df.drop_duplicates(subset=['날짜'], inplace=True)
-                df.set_index('날짜', inplace=True)
-                df.sort_index(inplace=True)
-                results[ticker] = df
-
+                
+                if all_records:
+                    df = pd.DataFrame(all_records)
+                    df.set_index('날짜', inplace=True)
+                    df.sort_index(inplace=True)
+                    
+                    # 기간 필터링
+                    # DataFrame 인덱스가 DatetimeIndex이므로 start_date, end_date(문자열 캐싱 후 슬라이스 가능)
+                    # date 객체를 pd.Timestamp로 변환하여 로케이션 비교
+                    mask = (df.index >= pd.Timestamp(start_date)) & (df.index <= pd.Timestamp(end_date))
+                    df_filtered = df.loc[mask].copy()
+                    
+                    # 등락률 계산
+                    df_filtered['등락률'] = df_filtered['종가'].pct_change() * 100
+                    
+                    if not df_filtered.empty:
+                        results[ticker] = df_filtered
+                        
+            except Exception as e:
+                print(f"[Warning] Failed to fetch bulk OHLCV for {ticker}: {e}")
+                
         return results
 
     def get_trading_days(self, start_date: date, end_date: date) -> List[date]:
         """두 날짜 사이의 실제 거래일 목록을 반환합니다. (삼성전자 시세 기준)."""
-        import datetime
         start_str = start_date.strftime("%Y%m%d") if isinstance(start_date, date) else start_date
         end_str   = end_date.strftime("%Y%m%d")   if isinstance(end_date, date) else end_date
         return self._get_trading_days(start_str, end_str)

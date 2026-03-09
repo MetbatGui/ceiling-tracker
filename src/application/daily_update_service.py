@@ -29,7 +29,7 @@ class DailyUpdateService:
         print(f"[Service] Starting daily update for {target_date}...")
         self._create_today_cohort(target_date)
         self._update_past_cohorts(target_date)
-        print(f"[Service] Daily update finished.")
+        print("[Service] Daily update finished.")
 
     def _create_today_cohort(self, target_date: date) -> None:
         ceiling_stocks = self._fetch_ceiling_stocks(target_date)
