@@ -103,7 +103,7 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
         }
         res = self.session.post(url, headers=headers, data=payload)
         if res.status_code != 200:
-            return []
+            raise RuntimeError(f"KRX 전종목 시세 조회 실패 (status={res.status_code}, date={target_date_str})")
         data = res.json()
         output = data.get('OutBlock_1', [])
         if not output: 
