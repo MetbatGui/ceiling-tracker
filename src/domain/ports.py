@@ -107,6 +107,43 @@ class CohortRepository(ABC):
         """
         pass
 
+    @abstractmethod
+    def load_incomplete_cohorts(self) -> List['CeilingCohort']:
+        """추적이 끝나지 않은 종목을 포함한 코호트를 전부 불러옵니다.
+
+        cohort_date 나이와 무관하게, TrackedStock.is_tracking_complete()가
+        False인 종목이 하나라도 있는 코호트를 반환합니다.
+
+        Returns:
+            List[CeilingCohort]: 코호트 객체 리스트
+        """
+        pass
+
+    @abstractmethod
+    def mark_collected(self, run_date: date, ceiling_count: int) -> None:
+        """해당 날짜의 수집이 완료되었음을 기록합니다.
+
+        상한가가 0건이어도 반드시 호출해야 합니다 — 그래야 "0건"과
+        "아직 미실행"을 구분할 수 있습니다.
+
+        Args:
+            run_date (date): 수집을 실행한 날짜
+            ceiling_count (int): 그날 발견된 상한가 종목 수 (0 이상)
+        """
+        pass
+
+    @abstractmethod
+    def is_date_collected(self, run_date: date) -> bool:
+        """해당 날짜의 수집이 이미 완료되었는지 확인합니다.
+
+        Args:
+            run_date (date): 확인할 날짜
+
+        Returns:
+            bool: mark_collected가 호출된 적이 있으면 True
+        """
+        pass
+
 
 class StoragePort(ABC):
     """저장소 추상 인터페이스(Port)입니다.

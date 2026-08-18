@@ -29,16 +29,20 @@ class ParquetCohortRepository(CohortRepository):
     """
 
     PARQUET_PATH = "cohorts.parquet"
+    COLLECTION_LOG_PATH = "collection_log.parquet"
 
-    def __init__(self, storage: StoragePort, parquet_path: str = PARQUET_PATH):
+    def __init__(self, storage: StoragePort, parquet_path: str = PARQUET_PATH,
+                 collection_log_path: str = COLLECTION_LOG_PATH):
         """저장소를 초기화합니다.
 
         Args:
             storage: 파일 I/O를 담당하는 StoragePort 구현체
             parquet_path: Parquet 파일 경로 (storage 기준 상대 경로)
+            collection_log_path: 일자별 수집 완료 기록 Parquet 경로
         """
         self.storage = storage
         self.parquet_path = parquet_path
+        self.collection_log_path = collection_log_path
 
     # ------------------------------------------------------------------
     # CohortRepository 인터페이스 구현
@@ -123,6 +127,68 @@ class ParquetCohortRepository(CohortRepository):
             lambda df: (df['cohort_date'] >= pd.Timestamp(start_date)) &
                        (df['cohort_date'] <= pd.Timestamp(end_date))
         )
+
+    def load_incomplete_cohorts(self) -> List[CeilingCohort]:
+        """추적이 끝나지 않은 종목을 포함한 코호트를 전부 불러옵니다.
+
+        cohort_date 나이와 무관하게, (cohort_date, stock_code)별 price_date
+        개수(당일 제외)가 FIXED_DATE_SLOTS-1 미만인 종목이 하나라도 있으면
+        해당 cohort_date 전체를 포함합니다.
+        """
+        from src.domain.constants import TradingConstants
+
+        df = self.storage.load_parquet(self.parquet_path)
+        if df.empty:
+            return []
+
+        df['cohort_date'] = pd.to_datetime(df['cohort_date'])
+        df['price_date'] = pd.to_datetime(df['price_date'])
+
+        tracked_only = df[df['price_date'] != df['cohort_date']]
+        counts = tracked_only.groupby(['cohort_date', 'stock_code']).size()
+        incomplete = counts[counts < TradingConstants.FIXED_DATE_SLOTS - 1]
+
+        # 최초 상한가일 뿐 아직 추적 이력이 하나도 없는 종목도 미완결로 포함
+        no_history_keys = set(
+            zip(df['cohort_date'], df['stock_code'])
+        ) - set(zip(tracked_only['cohort_date'], tracked_only['stock_code']))
+
+        incomplete_dates = set(incomplete.index.get_level_values('cohort_date')) | \
+            {k[0] for k in no_history_keys}
+        if not incomplete_dates:
+            return []
+
+        filtered = df[df['cohort_date'].isin(incomplete_dates)]
+        return self._dataframe_to_cohorts(filtered)
+
+    def mark_collected(self, run_date: date, ceiling_count: int) -> None:
+        """해당 날짜의 수집이 완료되었음을 기록합니다."""
+        log_df = self.storage.load_parquet(self.collection_log_path)
+
+        new_row = pd.DataFrame([{
+            'run_date': pd.Timestamp(run_date),
+            'ceiling_count': ceiling_count,
+        }])
+
+        if log_df.empty:
+            merged = new_row
+        else:
+            log_df['run_date'] = pd.to_datetime(log_df['run_date'])
+            merged = pd.concat(
+                [log_df[log_df['run_date'] != pd.Timestamp(run_date)], new_row],
+                ignore_index=True,
+            )
+
+        self.storage.save_parquet(merged, self.collection_log_path)
+
+    def is_date_collected(self, run_date: date) -> bool:
+        """해당 날짜의 수집이 이미 완료되었는지 확인합니다."""
+        log_df = self.storage.load_parquet(self.collection_log_path)
+        if log_df.empty:
+            return False
+
+        log_df['run_date'] = pd.to_datetime(log_df['run_date'])
+        return bool((log_df['run_date'] == pd.Timestamp(run_date)).any())
 
     # ------------------------------------------------------------------
     # 내부 헬퍼
