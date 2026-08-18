@@ -108,9 +108,11 @@ def daily_update(target_date_str):
 
     click.echo(f"=== Daily Update Start: {target_date} ===")
 
+    repo = _build_repo()
     routine = DailyRoutineService(
         calendar=CalendarService(),
-        update_service_factory=lambda: DailyUpdateService(KrxDirectStockInfoAdapter(), _build_repo()),
+        update_service_factory=lambda: DailyUpdateService(KrxDirectStockInfoAdapter(), repo),
+        repo=repo,
     )
 
     try:
@@ -118,6 +120,8 @@ def daily_update(target_date_str):
         if result.skipped:
             click.echo(f"⏭️ 휴장일({result.reason})이라 스킵합니다: {target_date}")
         else:
+            if result.backfilled:
+                click.echo(f"🔁 공백 {len(result.backfilled)}일 백필: {result.backfilled}")
             click.echo("✅ Parquet 데이터 업데이트 완료")
             click.echo("✨ Daily Update Completed Successfully")
             click.echo(" 리포트 생성: uv run python src/cli.py export-excel --year " + str(target_date.year))
