@@ -94,10 +94,12 @@ class DailyUpdateService:
         return all_prices
 
     def _collect_stock_names(self, cohorts: List[CeilingCohort],
-                             exclude_date: date) -> set:
+                             target_date: date) -> set:
+        # cohort_date가 target_date 이상인 코호트는 제외한다 — 아직 시작되지 않았거나
+        # 오늘 막 생성된 코호트에 그보다 이른 날짜의 가격을 기록할 수는 없다.
         all_stock_names: set[str] = set()
         for cohort in cohorts:
-            if cohort.cohort_date != exclude_date:
+            if cohort.cohort_date < target_date:
                 all_stock_names.update(s.stock.name for s in cohort.stocks)
         return all_stock_names
 
@@ -105,7 +107,7 @@ class DailyUpdateService:
                                   target_date: date, all_prices: dict) -> None:
         updated = []
         for cohort in cohorts:
-            if cohort.cohort_date == target_date:
+            if cohort.cohort_date >= target_date:
                 continue
             price_map = self._build_price_map_for_cohort(cohort, all_prices)
             if not price_map:

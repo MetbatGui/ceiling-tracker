@@ -116,6 +116,21 @@ def test_gap_scan_skips_holidays(mock_calendar, mock_repo, factory):
     assert weekend not in checked_dates
 
 
+def test_gap_backfill_failure_does_not_block_today(mock_calendar, mock_repo, factory, mock_update_service, capsys):
+    """공백 날짜 백필 중 하나가 실패해도 오늘 실행은 계속되어야 합니다."""
+    target = date(2026, 8, 18)
+    gap = date(2026, 8, 17)
+    mock_repo.is_date_collected.side_effect = lambda d: d != gap
+    mock_update_service.execute_daily_update.side_effect = [RuntimeError("KRX 조회 실패"), None]
+    service = DailyRoutineService(calendar=mock_calendar, update_service_factory=factory, repo=mock_repo)
+
+    result = service.run(target)
+
+    calls = [c.args[0] for c in mock_update_service.execute_daily_update.call_args_list]
+    assert calls == [gap, target]
+    assert result.skipped is False
+
+
 def test_backfill_cap_reached_logs_warning(mock_calendar, mock_repo, factory, capsys):
     """공백 후보가 lookback_days만큼 꽉 차면 경고를 출력해야 합니다."""
     mock_repo.is_date_collected.return_value = False

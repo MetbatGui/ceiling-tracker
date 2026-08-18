@@ -53,7 +53,11 @@ class DailyRoutineService:
 
         update_service = self.update_service_factory()
         for gap_date in gap_dates:
-            update_service.execute_daily_update(gap_date)
+            # 과거 공백 하나가 실패해도 오늘 실행(가장 중요한 부분)까지 막히면 안 된다.
+            try:
+                update_service.execute_daily_update(gap_date)
+            except Exception as e:
+                print(f"[DailyRoutineService] 백필 실패 ({gap_date}): {e}")
         update_service.execute_daily_update(target_date)
 
         return DailyRunResult(skipped=False, backfilled=gap_dates)

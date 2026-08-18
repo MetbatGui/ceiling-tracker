@@ -71,6 +71,24 @@ def test_provider_failure_prevents_mark_collected(service, mock_provider, mock_r
 # load_incomplete_cohorts 사용 검증
 # ---------------------------------------------------------------------------
 
+def test_does_not_backfill_price_before_cohorts_own_start_date(service, mock_provider, mock_repo):
+    """target_date보다 나중에 시작된 코호트에는 target_date 가격을 기록하면 안 됩니다.
+
+    load_incomplete_cohorts()는 날짜 상한이 없으므로, 과거 gap_date를 백필할 때
+    그보다 나중에 시작된(cohort_date가 미래인) 코호트가 섞여 들어올 수 있습니다.
+    """
+    from src.domain.model import CeilingCohort
+
+    future_cohort = CeilingCohort(cohort_date=date(2026, 8, 17))
+    future_cohort.add_stock("삼성전자", "005930", 80000)
+    mock_repo.load_incomplete_cohorts.return_value = [future_cohort]
+    mock_provider.fetch_current_prices.return_value = {"삼성전자": 81000}
+
+    service.execute_daily_update(date(2026, 8, 14))  # future_cohort보다 과거인 gap_date 백필
+
+    mock_repo.save_cohorts_batch.assert_not_called()
+
+
 def test_update_past_cohorts_uses_incomplete_cohorts_not_recent_window(
     service, mock_provider, mock_repo
 ):
