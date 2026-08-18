@@ -1,5 +1,5 @@
 import pytest
-from datetime import date
+from datetime import date, timedelta
 from src.domain.model import CeilingCohort, Stock, TrackedStock
 
 def test_fluctuation_rate_calculation():
@@ -16,6 +16,30 @@ def test_fluctuation_rate_calculation():
     # Price dropped to 90
     tracked.add_price(date(2026, 1, 28), 90)
     assert pytest.approx(tracked.current_fluctuation_rate) == -0.1
+
+def test_is_tracking_complete_false_when_below_fixed_slots():
+    """가격 히스토리가 FIXED_DATE_SLOTS-1(9)개 미만이면 미완결입니다."""
+    stock = Stock("Samsung", "005930")
+    tracked = TrackedStock(stock, 100)
+
+    base = date(2026, 1, 27)
+    for i in range(8):  # D+1 ~ D+8 (8개)
+        tracked.add_price(base + timedelta(days=i), 100 + i)
+
+    assert tracked.is_tracking_complete() is False
+
+
+def test_is_tracking_complete_true_when_reaches_fixed_slots():
+    """가격 히스토리가 FIXED_DATE_SLOTS-1(9)개 이상이면 완결입니다."""
+    stock = Stock("Samsung", "005930")
+    tracked = TrackedStock(stock, 100)
+
+    base = date(2026, 1, 27)
+    for i in range(9):  # D+1 ~ D+9 (9개)
+        tracked.add_price(base + timedelta(days=i), 100 + i)
+
+    assert tracked.is_tracking_complete() is True
+
 
 def test_cohort_update_prices():
     cohort_date = date(2026, 1, 26)

@@ -40,6 +40,15 @@ class TrackedStock:
         if not self.new_high_status and self.stock.new_high_status:
             self.new_high_status = self.stock.new_high_status
 
+    def is_tracking_complete(self) -> bool:
+        """추적이 끝났는지(D+1~D+FIXED_DATE_SLOTS-1 가격이 모두 채워졌는지) 판단합니다.
+
+        Returns:
+            bool: price_history가 FIXED_DATE_SLOTS-1개 이상이면 완결로 간주합니다.
+        """
+        from src.domain.constants import TradingConstants
+        return len(self.price_history) >= TradingConstants.FIXED_DATE_SLOTS - 1
+
     def add_price(self, date_key: date, price: int) -> None:
         """해당 날짜의 주가를 기록합니다.
 
