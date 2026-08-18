@@ -4,7 +4,7 @@
 비즈니스 로직이 특정 구현 기술에 종속되지 않도록 합니다.
 """
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from typing import List, Dict, Any, Optional, Tuple, TYPE_CHECKING
 from datetime import date
 import pandas as pd
 import openpyxl
@@ -66,18 +66,27 @@ class CohortRepository(ABC):
     """
 
     @abstractmethod
-    def save_cohort(self, cohort: 'CeilingCohort') -> None:
-        """코호트를 저장합니다. 기존 데이터와 병합하여 덮어쓰지 않습니다."""
+    def save_cohort(self, cohort: 'CeilingCohort',
+                     prune_range: Optional[Tuple[date, date]] = None) -> None:
+        """코호트를 저장합니다. 기존 데이터와 병합하여 덮어쓰지 않습니다.
+
+        Args:
+            prune_range: 지정하면 이 범위 내에서 새 데이터가 재확인하지 않는
+                기존 기록을 삭제합니다 (rebuild 용도).
+        """
         pass
 
     @abstractmethod
-    def save_cohorts_batch(self, cohorts: List['CeilingCohort']) -> None:
+    def save_cohorts_batch(self, cohorts: List['CeilingCohort'],
+                            prune_range: Optional[Tuple[date, date]] = None) -> None:
         """여러 코호트를 한 번의 I/O로 배치 저장합니다.
 
         save_cohort를 반복 호출하는 것보다 훨씬 빠릅니다.
 
         Args:
             cohorts: 저장할 CeilingCohort 리스트
+            prune_range: 지정하면 이 범위 내에서 새 데이터가 재확인하지 않는
+                기존 기록을 삭제합니다 (rebuild 용도).
         """
         pass
 

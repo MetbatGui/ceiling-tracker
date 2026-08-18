@@ -150,6 +150,6 @@ class RangeUpdateService:
         # 6. 전체 코호트 Parquet에 저장
         print(f"[Service] Saving {len(cohort_map)} cohorts to Parquet...")
         for d in sorted(cohort_map.keys()):
-            self.repo.save_cohort(cohort_map[d])
+            self.repo.save_cohort(cohort_map[d], prune_range=(start_date, end_date))
 
         print("[Service] Range update completed.")

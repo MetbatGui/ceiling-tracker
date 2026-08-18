@@ -102,6 +102,72 @@ def test_save_cohort_merges_with_existing(mock_storage):
 
 
 # ---------------------------------------------------------------------------
+# save_cohort prune_range 테스트 (rebuild 시 stale row 삭제)
+# ---------------------------------------------------------------------------
+
+def test_save_cohort_without_prune_range_keeps_stale_row(mock_storage):
+    """prune_range 없이 저장하면 새 데이터에 없는 기존 키는 그대로 남습니다 (기존 upsert 동작)."""
+    existing_df = pd.DataFrame([{
+        'cohort_date': pd.Timestamp('2026-01-05'), 'stock_name': '삼성전자',
+        'stock_code': '005930', 'new_high_status': '', 'initial_price': 80000,
+        'price_date': pd.Timestamp('2026-05-01'), 'price': 0,  # 오염된 stale row
+    }])
+    mock_storage.load_parquet.return_value = existing_df
+    repo = ParquetCohortRepository(storage=mock_storage, parquet_path="test.parquet")
+
+    cohort = _make_cohort(date(2026, 1, 5), [("삼성전자", "005930", 80000, "")])
+    cohort.stocks[0].add_price(date(2026, 1, 6), 84000)
+    repo.save_cohort(cohort)
+
+    saved_df = mock_storage.save_parquet.call_args[0][0]
+    assert pd.Timestamp('2026-05-01') in saved_df['price_date'].values
+
+
+def test_save_cohort_with_prune_range_removes_stale_row_not_reconfirmed(mock_storage):
+    """prune_range를 주면, 그 범위 내에서 새 데이터가 재확인하지 않는 기존 키는 삭제됩니다."""
+    existing_df = pd.DataFrame([{
+        'cohort_date': pd.Timestamp('2026-01-05'), 'stock_name': '삼성전자',
+        'stock_code': '005930', 'new_high_status': '', 'initial_price': 80000,
+        'price_date': pd.Timestamp('2026-05-01'), 'price': 0,  # 오염된 stale row
+    }])
+    mock_storage.load_parquet.return_value = existing_df
+    repo = ParquetCohortRepository(storage=mock_storage, parquet_path="test.parquet")
+
+    cohort = _make_cohort(date(2026, 1, 5), [("삼성전자", "005930", 80000, "")])
+    cohort.stocks[0].add_price(date(2026, 1, 6), 84000)
+    repo.save_cohort(cohort, prune_range=(date(2026, 1, 1), date(2026, 12, 31)))
+
+    saved_df = mock_storage.save_parquet.call_args[0][0]
+    assert pd.Timestamp('2026-05-01') not in saved_df['price_date'].values
+    assert pd.Timestamp('2026-01-06') in saved_df['price_date'].values
+
+
+def test_save_cohort_with_prune_range_does_not_touch_other_cohort_dates(mock_storage):
+    """prune_range가 있어도 저장 대상이 아닌 다른 cohort_date의 기록은 건드리지 않습니다."""
+    existing_df = pd.DataFrame([
+        {
+            'cohort_date': pd.Timestamp('2026-01-05'), 'stock_name': '삼성전자',
+            'stock_code': '005930', 'new_high_status': '', 'initial_price': 80000,
+            'price_date': pd.Timestamp('2026-05-01'), 'price': 0,
+        },
+        {
+            'cohort_date': pd.Timestamp('2026-02-10'), 'stock_name': 'SK하이닉스',
+            'stock_code': '000660', 'new_high_status': '', 'initial_price': 90000,
+            'price_date': pd.Timestamp('2026-05-01'), 'price': 0,
+        },
+    ])
+    mock_storage.load_parquet.return_value = existing_df
+    repo = ParquetCohortRepository(storage=mock_storage, parquet_path="test.parquet")
+
+    cohort = _make_cohort(date(2026, 1, 5), [("삼성전자", "005930", 80000, "")])
+    repo.save_cohort(cohort, prune_range=(date(2026, 1, 1), date(2026, 12, 31)))
+
+    saved_df = mock_storage.save_parquet.call_args[0][0]
+    sk_rows = saved_df[saved_df['stock_code'] == '000660']
+    assert len(sk_rows) == 1  # 다른 cohort_date(2026-02-10)의 stale row는 안 건드림
+
+
+# ---------------------------------------------------------------------------
 # load_recent_cohorts 테스트
 # ---------------------------------------------------------------------------
 

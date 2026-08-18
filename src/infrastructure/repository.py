@@ -4,7 +4,7 @@
 """
 import pandas as pd
 from datetime import datetime, date, timedelta
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 from src.domain.ports import CohortRepository, StoragePort
 from src.domain.model import CeilingCohort
 
@@ -48,8 +48,16 @@ class ParquetCohortRepository(CohortRepository):
     # CohortRepository 인터페이스 구현
     # ------------------------------------------------------------------
 
-    def save_cohort(self, cohort: CeilingCohort) -> None:
-        """코호트를 Parquet에 저장합니다. 기존 데이터와 병합합니다."""
+    def save_cohort(self, cohort: CeilingCohort,
+                     prune_range: Optional[Tuple[date, date]] = None) -> None:
+        """코호트를 Parquet에 저장합니다. 기존 데이터와 병합합니다.
+
+        Args:
+            prune_range: 지정하면 이 코호트의 cohort_date에 대해, 범위 내에서
+                새 데이터가 재확인하지 않는 기존 price_date 행을 삭제합니다
+                (rebuild 시 소스가 더 이상 주지 않는 값을 방치하지 않기 위함).
+                미지정 시 기존 upsert(키 일치 시에만 교체) 동작 그대로 유지.
+        """
         new_df = self._cohort_to_dataframe(cohort)
         if new_df.empty:
             return
@@ -59,13 +67,14 @@ class ParquetCohortRepository(CohortRepository):
         if existing_df.empty:
             merged_df = new_df
         else:
-            merged_df = self._merge_dataframes(existing_df, new_df)
+            merged_df = self._merge_dataframes(existing_df, new_df, prune_range)
 
         self.storage.save_parquet(merged_df, self.parquet_path)
         print(f"[ParquetRepo] 저장 완료: cohort_date={cohort.cohort_date}, "
               f"종목수={len(cohort.stocks)}")
 
-    def save_cohorts_batch(self, cohorts: List[CeilingCohort]) -> None:
+    def save_cohorts_batch(self, cohorts: List[CeilingCohort],
+                            prune_range: Optional[Tuple[date, date]] = None) -> None:
         """여러 코호트를 한 번의 parquet I/O로 배치 저장합니다."""
         if not cohorts:
             return
@@ -76,7 +85,6 @@ class ParquetCohortRepository(CohortRepository):
         if not new_dfs:
             return
 
-        import pandas as pd
         batch_df = pd.concat(new_dfs, ignore_index=True)
 
         # parquet 단 한 번 READ
@@ -85,7 +93,7 @@ class ParquetCohortRepository(CohortRepository):
         if existing_df.empty:
             merged_df = batch_df
         else:
-            merged_df = self._merge_dataframes(existing_df, batch_df)
+            merged_df = self._merge_dataframes(existing_df, batch_df, prune_range)
 
         # parquet 단 한 번 WRITE
         self.storage.save_parquet(merged_df, self.parquet_path)
@@ -214,13 +222,26 @@ class ParquetCohortRepository(CohortRepository):
         df['price_date'] = pd.to_datetime(df['price_date'])
         return df
 
-    def _merge_dataframes(self, existing: pd.DataFrame,
-                          new: pd.DataFrame) -> pd.DataFrame:
+    def _merge_dataframes(self, existing: pd.DataFrame, new: pd.DataFrame,
+                          prune_range: Optional[Tuple[date, date]] = None) -> pd.DataFrame:
         """기존 DataFrame과 신규 DataFrame을 병합합니다.
 
         동일한 (cohort_date, stock_code, price_date) 조합은 새 데이터로 교체합니다.
+        prune_range가 주어지면, new에 포함된 cohort_date들에 한해 그 범위 내의
+        기존 price_date 행 중 new가 재확인하지 않는 것도 함께 제거합니다
+        (단순 upsert가 아니라 해당 구간을 통째로 재구성).
         """
         key_cols = ['cohort_date', 'stock_code', 'price_date']
+
+        if prune_range:
+            prune_start, prune_end = prune_range
+            touched_cohort_dates = set(new['cohort_date'].unique())
+            stale_mask = (
+                existing['cohort_date'].isin(touched_cohort_dates) &
+                (existing['price_date'] >= pd.Timestamp(prune_start)) &
+                (existing['price_date'] <= pd.Timestamp(prune_end))
+            )
+            existing = existing[~stale_mask]
 
         # 기존 데이터에서 새 데이터와 겹치는 행 제거
         new_keys = new[key_cols]
