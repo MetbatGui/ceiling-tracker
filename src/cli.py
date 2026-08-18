@@ -24,7 +24,9 @@ try:
     from src.infrastructure.repository import ParquetCohortRepository
     from src.infrastructure.storage_adapters import LocalStorageAdapter, GoogleDriveAdapter
     from src.infrastructure.excel_renderer import ExcelRenderer
+    from src.infrastructure.calendar_service import CalendarService
     from src.application.daily_update_service import DailyUpdateService
+    from src.application.daily_routine_service import DailyRoutineService
     from src.application.range_update_service import RangeUpdateService
     from src.application.excel_export_service import ExcelExportService
 except ImportError:
@@ -106,15 +108,19 @@ def daily_update(target_date_str):
 
     click.echo(f"=== Daily Update Start: {target_date} ===")
 
-    provider = KrxDirectStockInfoAdapter()
-    repo = _build_repo()
-    service = DailyUpdateService(provider, repo)
+    routine = DailyRoutineService(
+        calendar=CalendarService(),
+        update_service_factory=lambda: DailyUpdateService(KrxDirectStockInfoAdapter(), _build_repo()),
+    )
 
     try:
-        service.execute_daily_update(target_date)
-        click.echo("✅ Parquet 데이터 업데이트 완료")
-        click.echo("✨ Daily Update Completed Successfully")
-        click.echo(" 리포트 생성: uv run python src/cli.py export-excel --year " + str(target_date.year))
+        result = routine.run(target_date)
+        if result.skipped:
+            click.echo(f"⏭️ 휴장일({result.reason})이라 스킵합니다: {target_date}")
+        else:
+            click.echo("✅ Parquet 데이터 업데이트 완료")
+            click.echo("✨ Daily Update Completed Successfully")
+            click.echo(" 리포트 생성: uv run python src/cli.py export-excel --year " + str(target_date.year))
     except Exception as e:
         click.echo(f"❌ Error during update: {e}")
         import traceback
