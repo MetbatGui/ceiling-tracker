@@ -81,9 +81,16 @@ class RangeUpdateService:
             list(all_tickers), date(1990, 1, 1), end_date
         )
 
-        # 5A. 가격 업데이트
+        # 5A. 가격 업데이트 (재구성: 요청 범위 내 기존 기록은 비우고 소스에서 다시 채움 —
+        # 그래야 휴장일 오염이나 시작일 이전 오기록처럼 소스가 더 이상 재확인해주지
+        # 않는 값이 방치되지 않고 사라짐)
         for d, c_obj in cohort_map.items():
             for s in c_obj.stocks:
+                s.price_history = {
+                    pd_date: price for pd_date, price in s.price_history.items()
+                    if not (start_date <= pd_date <= end_date)
+                }
+
                 if s.stock.code in history_map:
                     h_df = history_map[s.stock.code]
 
