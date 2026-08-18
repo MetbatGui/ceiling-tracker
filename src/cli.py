@@ -28,6 +28,7 @@ try:
     from src.application.daily_update_service import DailyUpdateService
     from src.application.daily_routine_service import DailyRoutineService
     from src.application.range_update_service import RangeUpdateService
+    from src.application.range_routine_service import RangeRoutineService
     from src.application.excel_export_service import ExcelExportService
 except ImportError:
     # 레거시 경로 대응 (필요한 경우)
@@ -157,12 +158,12 @@ def range_update(start_date_str, end_date_str):
 
     click.echo(f"=== Range Update Start: {start_date} ~ {end_date} ===")
 
-    provider = KrxDirectStockInfoAdapter()
-    repo = _build_repo()
-    service = RangeUpdateService(provider, repo)
+    routine = RangeRoutineService(
+        range_service_factory=lambda: RangeUpdateService(KrxDirectStockInfoAdapter(), _build_repo()),
+    )
 
     try:
-        service.execute_range_update(start_date, end_date)
+        routine.run_range(start_date, end_date)
         click.echo("✅ Range Update Completed Successfully")
     except Exception as e:
         click.echo(f"❌ Error during update: {e}")
@@ -185,24 +186,18 @@ def annual_update(start_year, end_year):
     """
     click.echo(f"=== Annual Update Start: {start_year} ~ {end_year} ===")
 
-    for year in range(start_year, end_year + 1):
-        start_date = date(year, 1, 2)
-        end_date = date(year, 12, 30)
+    routine = RangeRoutineService(
+        range_service_factory=lambda: RangeUpdateService(KrxDirectStockInfoAdapter(), _build_repo()),
+    )
+    result = routine.run_annual(start_year, end_year)
 
-        click.echo(f"\n>>> Processing Year: {year} ({start_date} ~ {end_date})")
+    for year in result.completed_years:
+        click.echo(f"✅ {year} 수집 완료.")
 
-        try:
-            provider = KrxDirectStockInfoAdapter()
-            repo = _build_repo()
-            service = RangeUpdateService(provider, repo)
-            service.execute_range_update(start_date, end_date)
-            click.echo(f"✅ {year} 수집 완료.")
-        except Exception as e:
-            click.echo(f"❌ Error processing {year}: {e}")
-            import traceback
-            traceback.print_exc()
-            click.echo("⚠️ 오류로 인해 annual update를 중단합니다.")
-            return
+    if result.failed_year is not None:
+        click.echo(f"❌ Error processing {result.failed_year}: {result.error}")
+        click.echo("⚠️ 오류로 인해 annual update를 중단합니다.")
+        return
 
     click.echo("\n=== All Annual Updates Completed ===")
     click.echo("💡 엑셀 리포트를 생성하려면: uv run python -m src.cli export-excel --year <연도>")
