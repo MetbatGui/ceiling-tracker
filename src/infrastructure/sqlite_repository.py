@@ -85,19 +85,37 @@ class SqliteCohortRepository(CohortRepository):
 
     def save_cohorts_batch(self, cohorts: List[CeilingCohort],
                             prune_range: Optional[Tuple[date, date]] = None) -> None:
+        """여러 코호트를 저장합니다. 연도 경계를 넘나드는 배치 전체가 원자적입니다 —
+
+        연도별로 파일이 분리되어 SQLite 자체의 단일 트랜잭션으로 묶을 수 없으므로,
+        모든 연도의 쓰기를 커밋하지 않은 채 먼저 실행해두고, 전부 성공했을 때만
+        순서대로 커밋합니다. 중간에 실패하면 이미 실행된 연도까지 전부 롤백합니다.
+        (파일 간 진짜 2단계 커밋은 아니라 마지막 커밋 자체가 실패하는 극단적 경우까지
+        막지는 못하지만, 그 경우도 재실행이 upsert라 안전합니다.)
+        """
         by_year: Dict[int, List[CeilingCohort]] = {}
         for cohort in cohorts:
             by_year.setdefault(cohort.cohort_date.year, []).append(cohort)
 
-        for year, year_cohorts in by_year.items():
-            conn = self._write_connect(year)
-            try:
-                with conn:
-                    for cohort in year_cohorts:
-                        self._save_one(conn, cohort, prune_range)
-                        print(f"[SqliteRepo] 저장 완료: cohort_date={cohort.cohort_date}, "
-                              f"종목수={len(cohort.stocks)}")
-            finally:
+        connections: List[sqlite3.Connection] = []
+        try:
+            for year, year_cohorts in by_year.items():
+                conn = self._write_connect(year)
+                connections.append(conn)
+                conn.execute("BEGIN")
+                for cohort in year_cohorts:
+                    self._save_one(conn, cohort, prune_range)
+                    print(f"[SqliteRepo] 저장 완료: cohort_date={cohort.cohort_date}, "
+                          f"종목수={len(cohort.stocks)}")
+        except Exception:
+            for conn in connections:
+                conn.rollback()
+            raise
+        else:
+            for conn in connections:
+                conn.commit()
+        finally:
+            for conn in connections:
                 conn.close()
 
     def _save_one(self, conn: sqlite3.Connection, cohort: CeilingCohort,

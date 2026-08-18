@@ -1,6 +1,7 @@
 """SqliteCohortRepository 유닛 테스트 (실제 sqlite 파일, tmp_path 사용)"""
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 from src.infrastructure.sqlite_repository import SqliteCohortRepository
 from src.domain.model import CeilingCohort
@@ -129,6 +130,29 @@ def test_is_date_collected_false_when_no_db_file_yet(tmp_path):
 # ---------------------------------------------------------------------------
 # prune_range
 # ---------------------------------------------------------------------------
+
+def test_save_cohorts_batch_rolls_back_all_years_on_failure(tmp_path):
+    """연도 A 저장이 실제로 실행된 뒤 연도 B 저장이 실패하면, A도 커밋되면 안 됩니다."""
+    repo = SqliteCohortRepository(db_dir=str(tmp_path))
+    cohort_a = _make_cohort(date(2025, 12, 20), [("A", "000001", 1000, "")])
+    cohort_b = _make_cohort(date(2026, 1, 10), [("B", "000002", 2000, "")])
+
+    original_save_one = SqliteCohortRepository._save_one
+
+    def flaky_save_one(self, conn, cohort, prune_range):
+        if cohort.cohort_date.year == 2026:
+            raise RuntimeError("disk full")
+        return original_save_one(self, conn, cohort, prune_range)
+
+    with patch.object(SqliteCohortRepository, "_save_one", flaky_save_one):
+        try:
+            repo.save_cohorts_batch([cohort_a, cohort_b])
+        except RuntimeError:
+            pass
+
+    restored = repo.load_cohorts_in_range(date(2025, 1, 1), date(2026, 12, 31))
+    assert restored == []  # 연도 A(2025)도 커밋되지 않고 함께 롤백되어야 함
+
 
 def test_prune_range_removes_stale_price_not_reconfirmed(tmp_path):
     repo = SqliteCohortRepository(db_dir=str(tmp_path))
