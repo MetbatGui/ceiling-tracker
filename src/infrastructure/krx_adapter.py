@@ -327,12 +327,6 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
                 
         return results
 
-    def get_trading_days(self, start_date: date, end_date: date) -> List[date]:
-        """두 날짜 사이의 실제 거래일 목록을 반환합니다. (삼성전자 시세 기준)."""
-        start_str = start_date.strftime("%Y%m%d") if isinstance(start_date, date) else start_date
-        end_str   = end_date.strftime("%Y%m%d")   if isinstance(end_date, date) else end_date
-        return self._get_trading_days(start_str, end_str)
-
     def _get_trading_days(self, start_str: str, end_str: str) -> List[date]:
         """삼성전자(005930) 시세 추이를 이용해 거래일 목록을 추출합니다."""
         import datetime

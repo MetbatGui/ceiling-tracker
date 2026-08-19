@@ -76,3 +76,16 @@ def test_get_trading_range_in_period_no_trading_days():
     first, last = service.get_trading_range_in_period(date(2026, 8, 15), date(2026, 8, 16))
 
     assert (first, last) == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# get_trading_days
+# ---------------------------------------------------------------------------
+
+def test_get_trading_days_excludes_weekend_and_holiday():
+    """기간 내 주말/고시 휴장일을 제외한 거래일 목록을 오름차순으로 반환합니다."""
+    service = _make_service(holidays={date(2026, 5, 1)})  # 금요일 휴장
+
+    days = service.get_trading_days(date(2026, 4, 29), date(2026, 5, 4))
+
+    assert days == [date(2026, 4, 29), date(2026, 4, 30), date(2026, 5, 4)]

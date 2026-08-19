@@ -44,19 +44,6 @@ class StockDataProvider(ABC):
         """기간 내 모든 거래일의 상한가 후보군을 병렬로 수집합니다."""
         pass
 
-    @abstractmethod
-    def get_trading_days(self, start_date: date, end_date: date) -> List[date]:
-        """두 날짜 사이의 실제 거래일 목록을 반환합니다.
-
-        Args:
-            start_date: 시작 날짜 (포함)
-            end_date: 종료 날짜 (포함)
-
-        Returns:
-            거래일 날짜 리스트 (오름차순)
-        """
-        pass
-
 
 class CohortRepository(ABC):
     """코호트 데이터를 저장하고 불러오는 추상 클래스(Port)입니다.

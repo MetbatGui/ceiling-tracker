@@ -4,7 +4,8 @@
 """
 from datetime import date
 
-from src.domain.ports import StockDataProvider, CohortRepository, StoragePort
+from src.domain.ports import CohortRepository, StoragePort
+from src.infrastructure.calendar_service import CalendarService
 
 
 class ExcelExportService:
@@ -16,19 +17,19 @@ class ExcelExportService:
 
     def __init__(self,
                  repo: CohortRepository,
-                 provider: StockDataProvider,
+                 calendar: CalendarService,
                  renderer,
                  storage: StoragePort) -> None:
         """서비스 초기화.
 
         Args:
             repo: 코호트 저장소 (Parquet)
-            provider: 주식 데이터 제공자 (거래일 조회용)
+            calendar: 거래일 조회용 (KRX 로그인 불필요 — 휴장일 API 역산)
             renderer: Excel 렌더러 (ExcelRenderer)
             storage: 파일 저장소 (local or Drive)
         """
         self.repo = repo
-        self.provider = provider
+        self.calendar = calendar
         self.renderer = renderer
         self.storage = storage
 
@@ -52,7 +53,7 @@ class ExcelExportService:
             return False
 
         print(f"[ExcelExportService] {len(cohorts)}개 코호트 로드 완료.")
-        trading_days = self.provider.get_trading_days(start_date, end_date)
+        trading_days = self.calendar.get_trading_days(start_date, end_date)
         wb = self.renderer.render(cohorts, trading_days=trading_days, end_date=end_date)
 
         ok = self.storage.save_workbook(wb, output_file)

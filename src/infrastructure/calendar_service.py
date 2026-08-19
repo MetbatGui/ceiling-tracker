@@ -100,6 +100,16 @@ class CalendarService:
 
         return trading_days[0], trading_days[-1]
 
+    def get_trading_days(self, start_date: date, end_date: date) -> list[date]:
+        """지정된 기간 내 휴장일을 제외한 거래일 목록을 오름차순으로 반환합니다."""
+        trading_days = []
+        curr = start_date
+        while curr <= end_date:
+            if not self.is_holiday(curr):
+                trading_days.append(curr)
+            curr += timedelta(days=1)
+        return trading_days
+
 
 if __name__ == '__main__':
     # ponytail: assert 기반 self-check (근로자의 날 하드코딩 제거가 실제 KRX 고시로 커버되는지 확인)

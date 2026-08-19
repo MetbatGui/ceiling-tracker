@@ -294,17 +294,17 @@ def export_excel(year, start_date_str, end_date_str, file_path, use_drive):
 
     # Parquet 데이터베이스는 무조건 로컬(가장 최신 수집본)에서 읽어옵니다.
     repo = _build_repo()
-    provider = KrxDirectStockInfoAdapter()
+    calendar = CalendarService()
     renderer = ExcelRenderer()
 
     # 결과물 출력 대상(storage)으로 전달 (Drive일 수도, 로컬일 수도 있음)
-    service = ExcelExportService(repo, provider, renderer, storage)
+    service = ExcelExportService(repo, calendar, renderer, storage)
     ok = service.generate_report(start_date, end_date, output_file)
 
     # Drive 업로드인 경우, 완성된 결과물(.xlsx)을 로컬에도 백업 저장
     if ok and use_drive:
         local_storage = LocalStorageAdapter(base_path=os.getenv("LOCAL_STORAGE_BASE_PATH", "data"))
-        local_service = ExcelExportService(repo, provider, renderer, local_storage)
+        local_service = ExcelExportService(repo, calendar, renderer, local_storage)
         local_service.generate_report(start_date, end_date, output_file)
         click.echo("💾 로컬 백업 완료")
 
