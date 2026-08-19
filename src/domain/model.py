@@ -147,8 +147,14 @@ class CeilingCohort:
             initial_price (int): 상한가 당시 종가
             new_high_status (str): 신고가 상태
         """
-        # 종목 중복 체크 (코드 기준, 코드가 없으면 이름 기준)
-        if any(s.stock.code == code or s.stock.name == name for s in self.stocks if code or name):
+        # 종목 중복 체크 (코드가 있으면 코드 기준, 없으면 이름 기준).
+        # code가 ''인 종목이 여럿이면 '' == '' 비교로 서로 다른 종목이 중복 판정되므로
+        # code 유무에 따라 비교 기준을 분리해야 함.
+        is_duplicate = any(
+            (code and s.stock.code == code) or (not code and s.stock.name == name)
+            for s in self.stocks
+        )
+        if is_duplicate:
             return
             
         stock = Stock(name=name, code=code, new_high_status=new_high_status)

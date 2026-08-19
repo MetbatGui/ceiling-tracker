@@ -397,7 +397,10 @@ class ExcelCohortRepository:
             except (ValueError, TypeError):
                 initial_price = 0
 
-        cohort.add_stock(name, '', initial_price, new_high_status)
+        # 레거시 엑셀에는 종목코드가 없음 - 이름을 대체 식별자로 사용
+        # (SqliteCohortRepository의 PK가 (cohort_date, stock_code)라서 코드가
+        # 전부 ''로 비어있으면 한 시트 안의 서로 다른 종목이 충돌함).
+        cohort.add_stock(name, name, initial_price, new_high_status)
         tracked = cohort.stocks[-1]
 
         for col_name, col_value in trimmed_row_dict.items():
