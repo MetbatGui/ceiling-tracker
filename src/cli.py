@@ -64,21 +64,25 @@ def _build_repo():
     return SqliteCohortRepository(db_dir=os.getenv("SQLITE_DB_DIR", "db"))
 
 
-def _upload_db_files(storage, db_dir: str, start_year: int, end_year: int) -> list:
-    """start_year~end_year 범위에서 로컬에 존재하는 db/{year}.db 파일들을 storage에 업로드합니다.
+def _upload_db_files(storage, db_dir: str) -> list:
+    """db_dir에 있는 모든 {year}.db 파일을 storage에 업로드합니다.
+
+    리포트 조회 날짜 범위가 아니라 로컬에 실제 존재하는 파일 전체를 대상으로
+    한다 - 연도 경계에서는 지난 연도 코호트도 여전히 업데이트될 수 있어서
+    (예: 12월 코호트가 1월에도 미완결 추적 중), 날짜 범위만 보고 업로드
+    대상을 정하면 실제로 바뀐 지난 연도 db가 누락될 수 있다.
 
     Returns:
         업로드된 파일명(예: "2026.db") 리스트.
     """
     uploaded = []
-    for year in range(start_year, end_year + 1):
-        local_path = Path(db_dir) / f"{year}.db"
-        if not local_path.exists():
+    for local_path in sorted(Path(db_dir).glob("*.db")):
+        if not local_path.stem.isdigit():
             continue
         with open(local_path, 'rb') as f:
             data = f.read()
-        if storage.put_file(f"db/{year}.db", data):
-            uploaded.append(f"{year}.db")
+        if storage.put_file(f"db/{local_path.name}", data):
+            uploaded.append(local_path.name)
     return uploaded
 
 
@@ -329,7 +333,7 @@ def export_excel(year, start_date_str, end_date_str, file_path, use_drive):
         click.echo("💾 로컬 백업 완료")
 
         db_dir = os.getenv("SQLITE_DB_DIR", "db")
-        uploaded = _upload_db_files(storage, db_dir, start_date.year, end_date.year)
+        uploaded = _upload_db_files(storage, db_dir)
         if uploaded:
             click.echo(f"☁️ DB 파일 업로드 완료: {', '.join(uploaded)}")
 
