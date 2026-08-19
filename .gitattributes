@@ -1,0 +1,5 @@
+# 리눅스 컨테이너에 직접 복사되는 셸 스크립트/crontab은 Windows에서 체크아웃될 때
+# CRLF로 바뀌면 shebang이 깨져(#!/bin/sh\r) "bad interpreter" 오류가 난다.
+docker/*.sh text eol=lf
+docker/crontab text eol=lf
+docker/Dockerfile text eol=lf
