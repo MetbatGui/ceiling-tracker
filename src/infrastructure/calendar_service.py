@@ -88,16 +88,9 @@ class CalendarService:
 
     def get_trading_range_in_period(self, start_date: date, end_date: date) -> Tuple[Optional[date], Optional[date]]:
         """지정된 기간 내 휴장일을 제외한 첫 거래일과 마지막 거래일을 반환합니다."""
-        trading_days = []
-        curr = start_date
-        while curr <= end_date:
-            if not self.is_holiday(curr):
-                trading_days.append(curr)
-            curr += timedelta(days=1)
-
+        trading_days = self.get_trading_days(start_date, end_date)
         if not trading_days:
             return None, None
-
         return trading_days[0], trading_days[-1]
 
     def get_trading_days(self, start_date: date, end_date: date) -> list[date]:
