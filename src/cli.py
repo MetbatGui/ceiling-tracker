@@ -148,6 +148,7 @@ def daily_update(target_date_str):
         click.echo(f"❌ Error during update: {e}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +310,7 @@ def export_excel(year, start_date_str, end_date_str, file_path, use_drive):
             click.echo("💡 로컬 저장소로 전환합니다.")
             storage = LocalStorageAdapter(base_path=os.getenv("LOCAL_STORAGE_BASE_PATH", "data"))
         else:
-            return
+            sys.exit(1)
 
     # Parquet 데이터베이스는 무조건 로컬(가장 최신 수집본)에서 읽어옵니다.
     repo = _build_repo()
@@ -336,6 +337,7 @@ def export_excel(year, start_date_str, end_date_str, file_path, use_drive):
         click.echo(f"✅ 엑셀 리포트 생성 완료: {output_file}")
     else:
         click.echo("❌ 엑셀 저장 실패")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

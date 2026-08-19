@@ -1,0 +1,42 @@
+# docker-compose.yml이 docker/ 폴더 안에 있으면 Compose가 프로젝트 이름을 폴더명
+# "docker"로 추론한다. 다른 프로젝트(krx-auto-crawling 등)도 같은 구조를 쓰면 이름이
+# 충돌해 `docker compose down`이 서로의 컨테이너를 orphan으로 오인해 지울 수 있으므로
+# 명시적으로 지정한다.
+name: ceiling-tracker
+
+services:
+  # 수동 1회 실행용 (예: docker compose run --rm ceiling-tracker daily-update)
+  ceiling-tracker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ../db:/app/db
+      - ../data:/app/data
+      - ../secrets:/app/secrets
+      # cli.py가 python-dotenv로 /app/.env를 직접 읽으므로 파일 자체를 마운트한다.
+      # (env_file: 방식은 cron이 스폰하는 잡 프로세스에는 상속되지 않아 부적합)
+      - ../.env:/app/.env:ro
+
+  # 컨테이너 내장 cron으로 데일리 파이프라인을 주기 실행 (스케줄은 docker/crontab 참고).
+  # cron 데몬 기동에 root 권한이 필요해 user를 root로 오버라이드함.
+  ceiling-tracker-cron:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    entrypoint: ["/app/docker/cron-entrypoint.sh"]
+    user: root
+    restart: unless-stopped
+    volumes:
+      - ../db:/app/db
+      - ../data:/app/data
+      - ../secrets:/app/secrets
+      - ../.env:/app/.env:ro
+    # json-file 드라이버는 기본적으로 로그 크기 제한이 없어 계속 커진다.
+    # 파이썬 쪽 로그(data/logs/app.log)는 RotatingFileHandler로 이미 로테이션되니
+    # 여기서 막는 건 순수 컨테이너 stdout(cron 출력) 캡처분.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

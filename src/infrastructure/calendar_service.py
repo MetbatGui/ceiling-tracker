@@ -8,6 +8,7 @@ import time
 from datetime import date, timedelta
 from typing import Set, Tuple, Optional
 import requests
+from src.logger import logger
 
 
 class CalendarService:
@@ -61,7 +62,7 @@ class CalendarService:
             self._holidays_cache[year] = holidays_set
             return holidays_set
         except Exception as e:
-            print(f"[CalendarService] {year}년 KRX 휴장일 조회 중 예외 발생: {e}")
+            logger.warning(f"[CalendarService] {year}년 KRX 휴장일 조회 중 예외 발생: {e}")
             return set()
 
     def is_holiday(self, target_date: date) -> bool:

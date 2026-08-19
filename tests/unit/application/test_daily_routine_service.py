@@ -131,7 +131,7 @@ def test_gap_backfill_failure_does_not_block_today(mock_calendar, mock_repo, fac
     assert result.skipped is False
 
 
-def test_backfill_cap_reached_logs_warning(mock_calendar, mock_repo, factory, capsys):
+def test_backfill_cap_reached_logs_warning(mock_calendar, mock_repo, factory, caplog):
     """공백 후보가 lookback_days만큼 꽉 차면 경고를 출력해야 합니다."""
     mock_repo.is_date_collected.return_value = False
     service = DailyRoutineService(
@@ -141,5 +141,4 @@ def test_backfill_cap_reached_logs_warning(mock_calendar, mock_repo, factory, ca
     result = service.run(date(2026, 8, 18))
 
     assert len(result.backfilled) == 3
-    captured = capsys.readouterr()
-    assert "백필 상한" in captured.out
+    assert "백필 상한" in caplog.text

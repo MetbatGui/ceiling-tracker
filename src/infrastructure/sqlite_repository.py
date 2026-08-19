@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 from src.domain.model import CeilingCohort
 from src.domain.ports import CohortRepository
+from src.logger import logger
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS cohort_stocks (
@@ -105,7 +106,7 @@ class SqliteCohortRepository(CohortRepository):
                 conn.execute("BEGIN")
                 for cohort in year_cohorts:
                     self._save_one(conn, cohort, prune_range)
-                    print(f"[SqliteRepo] 저장 완료: cohort_date={cohort.cohort_date}, "
+                    logger.info(f"[SqliteRepo] 저장 완료: cohort_date={cohort.cohort_date}, "
                           f"종목수={len(cohort.stocks)}")
         except Exception:
             for conn in connections:
