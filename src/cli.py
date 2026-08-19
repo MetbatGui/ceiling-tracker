@@ -21,7 +21,7 @@ if sys.platform.startswith('win'):
 
 try:
     from src.infrastructure.krx_adapter import KrxDirectStockInfoAdapter
-    from src.infrastructure.repository import ParquetCohortRepository
+    from src.infrastructure.sqlite_repository import SqliteCohortRepository
     from src.infrastructure.storage_adapters import LocalStorageAdapter, GoogleDriveAdapter
     from src.infrastructure.excel_renderer import ExcelRenderer
     from src.infrastructure.calendar_service import CalendarService
@@ -59,9 +59,8 @@ def _build_storage(use_drive: bool):
         return LocalStorageAdapter(base_path=base_path)
 
 
-def _build_repo(parquet_path: str = "cohorts.parquet"):
-    local_storage = LocalStorageAdapter(base_path=os.getenv("LOCAL_STORAGE_BASE_PATH", "data"))
-    return ParquetCohortRepository(storage=local_storage, parquet_path=parquet_path)
+def _build_repo():
+    return SqliteCohortRepository(db_dir=os.getenv("SQLITE_DB_DIR", "db"))
 
 
 def _dual_save_workbook(wb, filename: str, storage):
