@@ -4,6 +4,7 @@
 """
 import click
 from datetime import date, datetime
+from pathlib import Path
 import sys
 import os
 from dotenv import load_dotenv
@@ -61,6 +62,24 @@ def _build_storage(use_drive: bool):
 
 def _build_repo():
     return SqliteCohortRepository(db_dir=os.getenv("SQLITE_DB_DIR", "db"))
+
+
+def _upload_db_files(storage, db_dir: str, start_year: int, end_year: int) -> list:
+    """start_year~end_year 범위에서 로컬에 존재하는 db/{year}.db 파일들을 storage에 업로드합니다.
+
+    Returns:
+        업로드된 파일명(예: "2026.db") 리스트.
+    """
+    uploaded = []
+    for year in range(start_year, end_year + 1):
+        local_path = Path(db_dir) / f"{year}.db"
+        if not local_path.exists():
+            continue
+        with open(local_path, 'rb') as f:
+            data = f.read()
+        if storage.put_file(f"db/{year}.db", data):
+            uploaded.append(f"{year}.db")
+    return uploaded
 
 
 def _dual_save_workbook(wb, filename: str, storage):
@@ -302,11 +321,16 @@ def export_excel(year, start_date_str, end_date_str, file_path, use_drive):
     ok = service.generate_report(start_date, end_date, output_file)
 
     # Drive 업로드인 경우, 완성된 결과물(.xlsx)을 로컬에도 백업 저장
-    if ok and use_drive:
+    if ok and isinstance(storage, GoogleDriveAdapter):
         local_storage = LocalStorageAdapter(base_path=os.getenv("LOCAL_STORAGE_BASE_PATH", "data"))
         local_service = ExcelExportService(repo, calendar, renderer, local_storage)
         local_service.generate_report(start_date, end_date, output_file)
         click.echo("💾 로컬 백업 완료")
+
+        db_dir = os.getenv("SQLITE_DB_DIR", "db")
+        uploaded = _upload_db_files(storage, db_dir, start_date.year, end_date.year)
+        if uploaded:
+            click.echo(f"☁️ DB 파일 업로드 완료: {', '.join(uploaded)}")
 
     if ok:
         click.echo(f"✅ 엑셀 리포트 생성 완료: {output_file}")
