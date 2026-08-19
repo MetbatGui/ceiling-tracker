@@ -43,7 +43,6 @@ def setup_logger(name: str = "ceiling_tracker") -> logging.Logger:
         file_handler.setFormatter(log_format)
         logger.addHandler(file_handler)
     except Exception as e:
-        console_handler.setLevel(logging.WARNING)
         logger.warning(f"Failed to setup file logging: {e}")
 
     return logger
