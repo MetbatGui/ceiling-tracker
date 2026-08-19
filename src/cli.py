@@ -148,6 +148,7 @@ def daily_update(target_date_str):
         click.echo(f"❌ Error during update: {e}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
