@@ -7,6 +7,7 @@ from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Tuple
 from src.domain.ports import CohortRepository, StoragePort
 from src.domain.model import CeilingCohort
+from src.logger import logger
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +71,7 @@ class ParquetCohortRepository(CohortRepository):
             merged_df = self._merge_dataframes(existing_df, new_df, prune_range)
 
         self.storage.save_parquet(merged_df, self.parquet_path)
-        print(f"[ParquetRepo] 저장 완료: cohort_date={cohort.cohort_date}, "
+        logger.info(f"[ParquetRepo] 저장 완료: cohort_date={cohort.cohort_date}, "
               f"종목수={len(cohort.stocks)}")
 
     def save_cohorts_batch(self, cohorts: List[CeilingCohort],
@@ -98,7 +99,7 @@ class ParquetCohortRepository(CohortRepository):
         # parquet 단 한 번 WRITE
         self.storage.save_parquet(merged_df, self.parquet_path)
         for cohort in cohorts:
-            print(f"[ParquetRepo] 저장 완료: cohort_date={cohort.cohort_date}, "
+            logger.info(f"[ParquetRepo] 저장 완료: cohort_date={cohort.cohort_date}, "
                   f"종목수={len(cohort.stocks)}")
 
     def load_recent_cohorts(self, limit_days: int,
@@ -339,7 +340,7 @@ class ExcelCohortRepository:
         try:
             return storage.load_workbook(file_path)
         except Exception as e:
-            print(f"[ExcelRepo] 엑셀 읽기 실패: {e}")
+            logger.error(f"[ExcelRepo] 엑셀 읽기 실패: {e}")
             return None
 
     def _load_cohort_from_sheet(self, wb, sheet_name: str) -> Optional[CeilingCohort]:
@@ -359,7 +360,7 @@ class ExcelCohortRepository:
             try:
                 self._add_stock_from_row(cohort, headers, row, sheet_name)
             except Exception as e:
-                print(f"[ExcelRepo] [Warning] 행 로드 실패 ({sheet_name}): {e}")
+                logger.warning(f"[ExcelRepo] [Warning] 행 로드 실패 ({sheet_name}): {e}")
                 continue
 
         return cohort

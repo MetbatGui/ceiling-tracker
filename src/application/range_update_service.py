@@ -9,6 +9,7 @@ import pandas as pd
 from src.domain.model import CeilingCohort
 from src.domain.ports import StockDataProvider, CohortRepository
 from src.domain.constants import TradingConstants
+from src.logger import logger
 
 
 class RangeUpdateService:
@@ -32,15 +33,15 @@ class RangeUpdateService:
             start_date: 시작 날짜.
             end_date: 종료 날짜.
         """
-        print(f"\n[Service] Starting Range Update: {start_date} ~ {end_date}")
+        logger.info(f"\n[Service] Starting Range Update: {start_date} ~ {end_date}")
 
         # 1. 기간 내 상한가 후보군 수집
         daily_candidates = self.provider.fetch_candidates_in_range(start_date, end_date)
         if not daily_candidates:
-            print("[Service] No ceiling candidates found in this range.")
+            logger.info("[Service] No ceiling candidates found in this range.")
             return
 
-        print(f"[Service] Found candidates in {len(daily_candidates)} trading days.")
+        logger.info(f"[Service] Found candidates in {len(daily_candidates)} trading days.")
 
         # 2. 새 후보 티커 수집
         new_candidate_tickers = set()
@@ -74,7 +75,7 @@ class RangeUpdateService:
                     all_tickers.add(s.stock.code)
 
         if not all_tickers:
-            print("[Service] No tickers to fetch.")
+            logger.info("[Service] No tickers to fetch.")
             return
 
         history_map = self.provider.fetch_ohlcv_bulk(
@@ -111,7 +112,7 @@ class RangeUpdateService:
                             s.add_price(r_date, int(row_data['종가']))
 
         # 5B. 신고가 분석
-        print(f"[Service] Analyzing New High status for {len(cohort_map)} cohorts...")
+        logger.info(f"[Service] Analyzing New High status for {len(cohort_map)} cohorts...")
 
         for d, c_obj in cohort_map.items():
             for s in c_obj.stocks:
@@ -148,8 +149,8 @@ class RangeUpdateService:
                                 s.new_high_status = "52·근"
 
         # 6. 전체 코호트 Parquet에 저장
-        print(f"[Service] Saving {len(cohort_map)} cohorts to Parquet...")
+        logger.info(f"[Service] Saving {len(cohort_map)} cohorts to Parquet...")
         for d in sorted(cohort_map.keys()):
             self.repo.save_cohort(cohort_map[d], prune_range=(start_date, end_date))
 
-        print("[Service] Range update completed.")
+        logger.info("[Service] Range update completed.")

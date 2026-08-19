@@ -7,6 +7,7 @@ import requests  # type: ignore
 from typing import List, Dict, Any, Optional
 from datetime import date
 from src.domain.ports import StockDataProvider
+from src.logger import logger
 
 class KrxDirectStockInfoAdapter(StockDataProvider):
     """KRX 정보데이터시스템(data.krx.co.kr)에서 직접 데이터를 스크래핑하는 어댑터."""
@@ -71,16 +72,16 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
                 error_code = data.get("_error_code", "")
                 
             if error_code == "CD001":
-                print(f"[KRX Adapter] 세션 획득 완료 (회원번호: {data.get('MBR_NO', '')})")
+                logger.info(f"[KRX Adapter] 세션 획득 완료 (회원번호: {data.get('MBR_NO', '')})")
             else:
-                print(f"[KRX Adapter] 로그인 에러: {data}")
+                logger.error(f"[KRX Adapter] 로그인 에러: {data}")
                 
             # 기본 쿠키 세팅
             self.session.cookies.set('mdc.client_session', 'true', domain='data.krx.co.kr')
             self.session.cookies.set('lang', 'ko_KR', domain='data.krx.co.kr')
             
         except Exception as e:
-            print(f"[KRX Adapter] 로그인 요청 실패: {e}")
+            logger.error(f"[KRX Adapter] 로그인 요청 실패: {e}")
     def _fetch_all_markets(self, target_date_str: str) -> List[Dict[str, Any]]:
         """MDCSTAT01501을 호출하여 특정 날짜의 전종목 시세를 조회합니다."""
         url = "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
@@ -126,11 +127,11 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
             상한가 종목 정보 리스트.
         """
         target_date_str = target_date.strftime("%Y%m%d")
-        print(f"[KRX Adapter] Fetching market data for {target_date}...")
+        logger.info(f"[KRX Adapter] Fetching market data for {target_date}...")
         
         items = self._fetch_all_markets(target_date_str)
         if not items:
-            print(f"[Warning] No data found for {target_date}. Is it a holiday?")
+            logger.warning(f"[Warning] No data found for {target_date}. Is it a holiday?")
             return []
             
         results = []
@@ -155,7 +156,7 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
                 
                 self._analyze_new_high(res, target_date_str)
                 results.append(res)
-                print(f"  -> Found: {name} ({res['rate']*100:.2f}%) Status: {res['new_high_status']}")
+                logger.info(f"  -> Found: {name} ({res['rate']*100:.2f}%) Status: {res['new_high_status']}")
                 
         return results
 
@@ -224,7 +225,7 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
             res['new_high_status'] = status
             
         except Exception as e:
-            print(f"[Warning] Failed to fetch Naver data for {res['name']}({res['code']}): {e}")
+            logger.warning(f"[Warning] Failed to fetch Naver data for {res['name']}({res['code']}): {e}")
 
     def fetch_current_prices(self, identifiers: List[str], target_date: date) -> Dict[str, int]:
         """주어진 종목들의 특정 날짜 종가를 일괄 조회합니다.
@@ -237,7 +238,7 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
             {종목명: 종가} 형태의 매핑 데이터.
         """
         target_date_str = target_date.strftime("%Y%m%d")
-        print(f"[KRX Adapter] Batch fetching prices for {len(identifiers)} stocks...")
+        logger.info(f"[KRX Adapter] Batch fetching prices for {len(identifiers)} stocks...")
         
         items = self._fetch_all_markets(target_date_str)
         if not items:
@@ -270,7 +271,7 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
         end_str = end_date.strftime("%Y%m%d")
         results = {}
         
-        print(f"[KRX Adapter (Naver)] Fetching OHLCV for {len(tickers)} stocks ({start_str}~{end_str})...")
+        logger.info(f"[KRX Adapter (Naver)] Fetching OHLCV for {len(tickers)} stocks ({start_str}~{end_str})...")
         
         # 시작과 끝 기간 대략적 산정 (넉넉히 15년치 = 3650 영업일 호출)
         # 네이버 API는 count 단위이므로 전체기간을 가져온 뒤 DataFrame 수준에서 필터링
@@ -323,7 +324,7 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
                         results[ticker] = df_filtered
                         
             except Exception as e:
-                print(f"[Warning] Failed to fetch bulk OHLCV for {ticker}: {e}")
+                logger.warning(f"[Warning] Failed to fetch bulk OHLCV for {ticker}: {e}")
                 
         return results
 
@@ -379,7 +380,7 @@ class KrxDirectStockInfoAdapter(StockDataProvider):
         end_str = end_date.strftime("%Y%m%d")
         
         trading_days = self._get_trading_days(start_str, end_str)
-        print(f"[KRX Adapter] Found {len(trading_days)} trading days in range.")
+        logger.info(f"[KRX Adapter] Found {len(trading_days)} trading days in range.")
         
         results = {}
         for d in trading_days:

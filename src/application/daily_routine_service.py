@@ -8,6 +8,7 @@ from typing import Callable, List
 from src.application.daily_update_service import DailyUpdateService
 from src.domain.ports import CohortRepository
 from src.infrastructure.calendar_service import CalendarService
+from src.logger import logger
 
 # 자동 백필이 되돌아볼 최근 거래일 수 상한. 이보다 오래된 공백은 자동으로
 # 안 채워지고 range-update로 수동 백필해야 함 (무한정 과거로 확장하면
@@ -46,7 +47,7 @@ class DailyRoutineService:
 
         gap_dates = self._detect_recent_gaps(target_date)
         if len(gap_dates) == self.lookback_days:
-            print(
+            logger.info(
                 f"⚠️ 자동 백필 상한({self.lookback_days}거래일) 도달 — "
                 "그 이상 공백이 있을 수 있습니다. range-update로 수동 확인 필요"
             )
@@ -57,7 +58,7 @@ class DailyRoutineService:
             try:
                 update_service.execute_daily_update(gap_date)
             except Exception as e:
-                print(f"[DailyRoutineService] 백필 실패 ({gap_date}): {e}")
+                logger.error(f"[DailyRoutineService] 백필 실패 ({gap_date}): {e}")
         update_service.execute_daily_update(target_date)
 
         return DailyRunResult(skipped=False, backfilled=gap_dates)

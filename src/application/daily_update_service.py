@@ -7,6 +7,7 @@ from typing import List
 
 from src.domain.model import CeilingCohort
 from src.domain.ports import StockDataProvider, CohortRepository
+from src.logger import logger
 
 
 class DailyUpdateService:
@@ -25,10 +26,10 @@ class DailyUpdateService:
 
     def execute_daily_update(self, target_date: date) -> None:
         """오늘 상한가 코호트 생성 + 추적 미완결 코호트 가격 업데이트."""
-        print(f"[Service] Starting daily update for {target_date}...")
+        logger.info(f"[Service] Starting daily update for {target_date}...")
         self._create_today_cohort(target_date)
         self._update_past_cohorts(target_date)
-        print("[Service] Daily update finished.")
+        logger.info("[Service] Daily update finished.")
 
     def _create_today_cohort(self, target_date: date) -> None:
         ceiling_stocks = self._fetch_ceiling_stocks(target_date)
@@ -43,9 +44,9 @@ class DailyUpdateService:
     def _fetch_ceiling_stocks(self, target_date: date) -> List:
         ceiling_stocks = self.provider.fetch_today_ceiling_stocks(target_date)
         if not ceiling_stocks:
-            print(f"[Service] No ceiling stocks found for {target_date}.")
+            logger.info(f"[Service] No ceiling stocks found for {target_date}.")
             return []
-        print(f"[Service] Found {len(ceiling_stocks)} ceiling stocks. Creating new cohort.")
+        logger.info(f"[Service] Found {len(ceiling_stocks)} ceiling stocks. Creating new cohort.")
         return ceiling_stocks
 
     def _build_cohort_from_stocks(self, target_date: date,
@@ -75,21 +76,21 @@ class DailyUpdateService:
         # 채워져도 추적이 누락되지 않도록 하기 위함.
         incomplete_cohorts = self.repo.load_incomplete_cohorts()
         if not incomplete_cohorts:
-            print("[Service] No recent cohorts to update.")
+            logger.info("[Service] No recent cohorts to update.")
             return []
-        print(f"[Service] Updating {len(incomplete_cohorts)} recent cohorts...")
+        logger.info(f"[Service] Updating {len(incomplete_cohorts)} recent cohorts...")
         return incomplete_cohorts
 
     def _fetch_prices_for_cohorts(self, cohorts: List[CeilingCohort],
                                    target_date: date) -> dict:
         all_stock_names = self._collect_stock_names(cohorts, target_date)
         if not all_stock_names:
-            print("[Service] No stocks to update.")
+            logger.info("[Service] No stocks to update.")
             return {}
-        print(f"[Service] Fetching prices for {len(all_stock_names)} unique stocks...")
+        logger.info(f"[Service] Fetching prices for {len(all_stock_names)} unique stocks...")
         all_prices = self.provider.fetch_current_prices(list(all_stock_names), target_date)
         if not all_prices:
-            print("[Service] No price data available for today.")
+            logger.info("[Service] No price data available for today.")
             return {}
         return all_prices
 
@@ -111,10 +112,10 @@ class DailyUpdateService:
                 continue
             price_map = self._build_price_map_for_cohort(cohort, all_prices)
             if not price_map:
-                print(f"  -> No price data for cohort {cohort.cohort_date}")
+                logger.info(f"  -> No price data for cohort {cohort.cohort_date}")
                 continue
             cohort.update_prices(target_date, price_map)
-            print(f"  -> Updated cohort {cohort.cohort_date} ({len(price_map)} stocks)")
+            logger.info(f"  -> Updated cohort {cohort.cohort_date} ({len(price_map)} stocks)")
             updated.append(cohort)
 
         # parquet R+W 단 1회

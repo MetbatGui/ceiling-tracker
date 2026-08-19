@@ -6,6 +6,7 @@ from datetime import date
 
 from src.domain.ports import CohortRepository, StoragePort
 from src.infrastructure.calendar_service import CalendarService
+from src.logger import logger
 
 
 class ExcelExportService:
@@ -49,16 +50,16 @@ class ExcelExportService:
         """
         cohorts = self.repo.load_cohorts_in_range(start_date, end_date)
         if not cohorts:
-            print(f"[ExcelExportService] 데이터 없음: {start_date} ~ {end_date}")
+            logger.info(f"[ExcelExportService] 데이터 없음: {start_date} ~ {end_date}")
             return False
 
-        print(f"[ExcelExportService] {len(cohorts)}개 코호트 로드 완료.")
+        logger.info(f"[ExcelExportService] {len(cohorts)}개 코호트 로드 완료.")
         trading_days = self.calendar.get_trading_days(start_date, end_date)
         wb = self.renderer.render(cohorts, trading_days=trading_days, end_date=end_date)
 
         ok = self.storage.save_workbook(wb, output_file)
         if ok:
-            print(f"[ExcelExportService] 저장 완료: {output_file}")
+            logger.info(f"[ExcelExportService] 저장 완료: {output_file}")
         else:
-            print(f"[ExcelExportService] 저장 실패: {output_file}")
+            logger.error(f"[ExcelExportService] 저장 실패: {output_file}")
         return ok
