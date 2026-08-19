@@ -21,6 +21,7 @@ services:
   # 컨테이너 내장 cron으로 데일리 파이프라인을 주기 실행 (스케줄은 docker/crontab 참고).
   # cron 데몬 기동에 root 권한이 필요해 user를 root로 오버라이드함.
   ceiling-tracker-cron:
+    container_name: ceiling-tracker
     build:
       context: ..
       dockerfile: docker/Dockerfile
