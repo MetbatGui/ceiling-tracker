@@ -27,6 +27,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends cron tzdata \
     && rm -rf /var/lib/apt/lists/*
 ENV TZ=Asia/Seoul
+# ENV TZ는 cron 데몬(crond) 자체가 crontab 시각을 해석하는 기준에는 반영되지 않음 -
+# crond는 /etc/localtime을 봄. 이걸 안 하면 crontab에 적어둔 시각이 KST가 아니라
+# UTC로 해석돼 실제 발화 시각이 9시간 어긋날 수 있음.
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 COPY docker/crontab /etc/cron.d/ceiling-tracker-cron
 RUN chmod 0644 /etc/cron.d/ceiling-tracker-cron \
