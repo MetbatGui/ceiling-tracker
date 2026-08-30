@@ -93,6 +93,9 @@ GOOGLE_DRIVE_CLIENT_SECRET_FILE=secrets/client_secret.json
 
 LOCAL_STORAGE_BASE_PATH=data
 SQLITE_DB_DIR=db
+
+# 선택 - 로그 레벨 (기본값 INFO)
+LOG_LEVEL=INFO
 ```
 
 ### 4. 시크릿 설정

@@ -11,6 +11,7 @@ SQLite에 있는 데이터와 겹치면 upsert되므로 여러 번 실행해도 
 import argparse
 import os
 import sys
+from datetime import date
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -54,6 +55,15 @@ def main():
         sqlite_repo.save_cohorts_batch(cohorts)
         stock_count = sum(len(c.stocks) for c in cohorts)
         print(f"[Migrate] {year}: 코호트 {len(cohorts)}개, 종목수 {stock_count} -> db/{year}.db")
+
+        # db_ssot_guide.md §9-10: 조용히 사라지는 데이터는 카운트 비교 없이는
+        # 드러나지 않는다 - 이관 직후 실제로 다시 읽어서 소스와 결과 코호트 수를 대조한다.
+        migrated = sqlite_repo.load_cohorts_in_range(date(year, 1, 1), date(year, 12, 31))
+        assert len(migrated) == len(cohorts), (
+            f"[Migrate] {year}: 이관 후 카운트 불일치 - 소스 {len(cohorts)}개 "
+            f"vs SQLite {len(migrated)}개"
+        )
+        print(f"[Migrate] {year}: 카운트 검증 통과 ({len(migrated)}개)")
 
 
 if __name__ == '__main__':

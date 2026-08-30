@@ -13,7 +13,11 @@ services:
     volumes:
       - ../db:/app/db
       - ../data:/app/data
-      - ../secrets:/app/secrets
+      # client_secret은 OAuth 갱신용 비밀값이라 컨테이너가 쓸 이유가 없어 :ro,
+      # token은 만료 시 자동 갱신되어 다시 쓰여야 하므로 쓰기 가능하게 둔다
+      # (docker_guide.md §4.1).
+      - ../secrets/client_secret.json:/app/secrets/client_secret.json:ro
+      - ../secrets/token.json:/app/secrets/token.json
       # cli.py가 python-dotenv로 /app/.env를 직접 읽으므로 파일 자체를 마운트한다.
       # (env_file: 방식은 cron이 스폰하는 잡 프로세스에는 상속되지 않아 부적합)
       - ../.env:/app/.env:ro
@@ -31,7 +35,11 @@ services:
     volumes:
       - ../db:/app/db
       - ../data:/app/data
-      - ../secrets:/app/secrets
+      # client_secret은 OAuth 갱신용 비밀값이라 컨테이너가 쓸 이유가 없어 :ro,
+      # token은 만료 시 자동 갱신되어 다시 쓰여야 하므로 쓰기 가능하게 둔다
+      # (docker_guide.md §4.1).
+      - ../secrets/client_secret.json:/app/secrets/client_secret.json:ro
+      - ../secrets/token.json:/app/secrets/token.json
       - ../.env:/app/.env:ro
     # json-file 드라이버는 기본적으로 로그 크기 제한이 없어 계속 커진다.
     # 파이썬 쪽 로그(data/logs/app.log)는 RotatingFileHandler로 이미 로테이션되니
