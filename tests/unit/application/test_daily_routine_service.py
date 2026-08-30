@@ -142,3 +142,113 @@ def test_backfill_cap_reached_logs_warning(mock_calendar, mock_repo, factory, ca
 
     assert len(result.backfilled) == 3
     assert "백필 상한" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# DB 다운로드 세션 소유 (orchestration_guide.md §1/§3, db_ssot_guide.md §6)
+# ---------------------------------------------------------------------------
+
+def test_drive_storage_factory_none_skips_download(mock_calendar, mock_repo, factory, mock_update_service):
+    """drive_storage_factory를 안 주면(로컬 전용) 다운로드 없이 그냥 수집만 한다."""
+    service = DailyRoutineService(
+        calendar=mock_calendar, update_service_factory=factory, repo=mock_repo,
+    )
+
+    result = service.run(date(2026, 8, 18))
+
+    assert result.download_failed is False
+    mock_update_service.execute_daily_update.assert_called_once_with(date(2026, 8, 18))
+
+
+def test_download_success_proceeds_to_collection(mock_calendar, mock_repo, factory, mock_update_service):
+    from unittest.mock import patch
+
+    drive_storage = MagicMock()
+    service = DailyRoutineService(
+        calendar=mock_calendar, update_service_factory=factory, repo=mock_repo,
+        drive_storage_factory=lambda: drive_storage, db_dir="db",
+    )
+
+    with patch("src.application.daily_routine_service.sync_db_down", return_value=True) as mock_sync:
+        result = service.run(date(2026, 8, 18))
+
+    mock_sync.assert_called_once_with(drive_storage, "db", [2026, 2025])
+    assert result.download_failed is False
+    mock_update_service.execute_daily_update.assert_called_once_with(date(2026, 8, 18))
+
+
+def test_download_failure_aborts_before_collection(mock_calendar, mock_repo, factory, mock_update_service):
+    """db_ssot_guide.md §6.1: 원격에 파일은 있는데 다운로드가 실패하면 로컬 상태를
+    신뢰할 수 없으므로 수집을 아예 시작하지 말고 중단해야 한다."""
+    from unittest.mock import patch
+
+    drive_storage = MagicMock()
+    service = DailyRoutineService(
+        calendar=mock_calendar, update_service_factory=factory, repo=mock_repo,
+        drive_storage_factory=lambda: drive_storage, db_dir="db",
+    )
+
+    with patch("src.application.daily_routine_service.sync_db_down", return_value=False):
+        result = service.run(date(2026, 8, 18))
+
+    assert result.download_failed is True
+    mock_update_service.execute_daily_update.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# export/업로드가 오케스트레이션 흐름 안에 포함 (orchestration_guide.md §1)
+# ---------------------------------------------------------------------------
+
+def test_publish_service_factory_none_skips_publish(mock_calendar, mock_repo, factory):
+    """publish_service_factory를 안 주면 publish 결과 없이 수집만 한다(하위 호환)."""
+    service = DailyRoutineService(calendar=mock_calendar, update_service_factory=factory, repo=mock_repo)
+
+    result = service.run(date(2026, 8, 18))
+
+    assert result.publish is None
+
+
+def test_publish_service_factory_called_with_drive_storage_after_collection(
+    mock_calendar, mock_repo, factory, mock_update_service
+):
+    """수집이 끝난 뒤 publish_service_factory가 (다운로드에 쓴 것과 같은) drive_storage로
+    호출되고, 그 결과가 DailyRunResult.publish에 담겨야 한다."""
+    from unittest.mock import patch
+
+    drive_storage = MagicMock()
+    publish_service = MagicMock()
+    publish_service.publish.return_value = "PUBLISH_RESULT_SENTINEL"
+    publish_factory = MagicMock(return_value=publish_service)
+
+    service = DailyRoutineService(
+        calendar=mock_calendar, update_service_factory=factory, repo=mock_repo,
+        drive_storage_factory=lambda: drive_storage, db_dir="db",
+        publish_service_factory=publish_factory,
+    )
+
+    with patch("src.application.daily_routine_service.sync_db_down", return_value=True):
+        result = service.run(date(2026, 8, 18))
+
+    publish_factory.assert_called_once_with(drive_storage)
+    publish_service.publish.assert_called_once_with(
+        date(2026, 1, 1), date(2026, 12, 31), "상한가분석(2026년).xlsx"
+    )
+    assert result.publish == "PUBLISH_RESULT_SENTINEL"
+
+
+def test_publish_not_attempted_when_download_fails(mock_calendar, mock_repo, factory):
+    from unittest.mock import patch
+
+    drive_storage = MagicMock()
+    publish_factory = MagicMock()
+
+    service = DailyRoutineService(
+        calendar=mock_calendar, update_service_factory=factory, repo=mock_repo,
+        drive_storage_factory=lambda: drive_storage, db_dir="db",
+        publish_service_factory=publish_factory,
+    )
+
+    with patch("src.application.daily_routine_service.sync_db_down", return_value=False):
+        service.run(date(2026, 8, 18))
+
+    publish_factory.assert_not_called()
