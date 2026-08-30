@@ -11,7 +11,8 @@ from src.cli import cli
 
 
 def test_daily_update_exits_nonzero_on_failure():
-    with patch("src.cli._build_repo", return_value=MagicMock()), \
+    with patch("src.cli._try_build_drive_storage", return_value=None), \
+         patch("src.cli._build_repo", return_value=MagicMock()), \
          patch("src.cli.CalendarService"), \
          patch("src.cli.KrxDirectStockInfoAdapter"), \
          patch("src.cli.DailyRoutineService") as mock_routine_cls:
@@ -21,3 +22,19 @@ def test_daily_update_exits_nonzero_on_failure():
         result = runner.invoke(cli, ["daily-update"])
 
         assert result.exit_code != 0
+
+
+def test_daily_update_exits_nonzero_when_db_download_fails():
+    """db_ssot_guide.md §6.1: 원격에 파일은 있는데 다운로드가 실패하면 로컬 상태를
+    신뢰할 수 없으므로 수집을 아예 시작하지 말고 중단해야 한다."""
+    with patch("src.cli._try_build_drive_storage", return_value=MagicMock()), \
+         patch("src.cli._sync_db_down", return_value=False), \
+         patch("src.cli._build_repo", return_value=MagicMock()), \
+         patch("src.cli.CalendarService"), \
+         patch("src.cli.KrxDirectStockInfoAdapter"), \
+         patch("src.cli.DailyRoutineService") as mock_routine_cls:
+        runner = CliRunner()
+        result = runner.invoke(cli, ["daily-update"])
+
+        assert result.exit_code != 0
+        mock_routine_cls.return_value.run.assert_not_called()
