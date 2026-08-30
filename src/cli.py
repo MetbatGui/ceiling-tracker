@@ -64,6 +64,45 @@ def _build_repo():
     return SqliteCohortRepository(db_dir=os.getenv("SQLITE_DB_DIR", "db"))
 
 
+def _try_build_drive_storage():
+    """GOOGLE_DRIVE_ROOT_FOLDER_ID가 설정돼 있을 때만 Drive storage를 만든다.
+
+    설정 자체가 없으면(로컬 전용 개발 환경 등) None을 반환해 다운로드 단계를
+    건너뛴다 - 이건 "다운로드 실패"가 아니라 "Drive 미사용"이라 구분해야 한다
+    (db_ssot_guide.md §6.1).
+    """
+    if not os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID"):
+        return None
+    return _build_storage(True)
+
+
+def _sync_db_down(storage, db_dir: str, years) -> bool:
+    """GDrive에 있는 {year}.db를 로컬로 받아 덮어쓴다 (db_ssot_guide.md §6.1/§6.2).
+
+    로컬에 이미 파일이 있어도 항상 다시 받는다("로컬은 항상 불신의 대상"). 원격에
+    파일이 있는 게 확인됐는데 다운로드가 실패하면 "없음"과 구분해 실패로 보고한다 -
+    빈/낡은 로컬로 계속 진행하다 그대로 재업로드하면 기존 데이터가 사라진다.
+
+    Returns:
+        bool: 대상 연도 전부가 정상(원격에 없거나 다운로드 성공)이면 True, 원격에
+            파일이 있는데 다운로드가 실패한 연도가 하나라도 있으면 False.
+    """
+    db_path = Path(db_dir)
+    db_path.mkdir(parents=True, exist_ok=True)
+    ok = True
+    for year in sorted(set(years)):
+        remote_path = f"db/{year}.db"
+        if not storage.path_exists(remote_path):
+            continue  # 원격에 아직 없음 - 최초 수집 전이라 정상
+        data = storage.get_file(remote_path)
+        if data is None:
+            click.echo(f"❌ {year}.db 다운로드 실패 - 원격에 파일은 있는데 읽지 못했습니다.")
+            ok = False
+            continue
+        (db_path / f"{year}.db").write_bytes(data)
+    return ok
+
+
 def _upload_db_files(storage, db_dir: str) -> list:
     """db_dir에 있는 모든 {year}.db 파일을 storage에 업로드합니다.
 
@@ -131,6 +170,13 @@ def daily_update(target_date_str):
 
     click.echo(f"=== Daily Update Start: {target_date} ===")
 
+    db_dir = os.getenv("SQLITE_DB_DIR", "db")
+    drive_storage = _try_build_drive_storage()
+    if drive_storage is not None:
+        if not _sync_db_down(drive_storage, db_dir, [target_date.year, target_date.year - 1]):
+            click.echo("❌ DB 다운로드 실패 - 로컬 상태를 신뢰할 수 없어 중단합니다.")
+            sys.exit(1)
+
     repo = _build_repo()
     routine = DailyRoutineService(
         calendar=CalendarService(),
@@ -145,7 +191,7 @@ def daily_update(target_date_str):
         else:
             if result.backfilled:
                 click.echo(f"🔁 공백 {len(result.backfilled)}일 백필: {result.backfilled}")
-            click.echo("✅ Parquet 데이터 업데이트 완료")
+            click.echo("✅ SQLite 데이터 업데이트 완료")
             click.echo("✨ Daily Update Completed Successfully")
             click.echo(" 리포트 생성: uv run python src/cli.py export-excel --year " + str(target_date.year))
     except Exception as e:
@@ -181,6 +227,13 @@ def range_update(start_date_str, end_date_str):
 
     click.echo(f"=== Range Update Start: {start_date} ~ {end_date} ===")
 
+    db_dir = os.getenv("SQLITE_DB_DIR", "db")
+    drive_storage = _try_build_drive_storage()
+    if drive_storage is not None:
+        if not _sync_db_down(drive_storage, db_dir, range(start_date.year, end_date.year + 1)):
+            click.echo("❌ DB 다운로드 실패 - 로컬 상태를 신뢰할 수 없어 중단합니다.")
+            sys.exit(1)
+
     routine = RangeRoutineService(
         range_service_factory=lambda: RangeUpdateService(KrxDirectStockInfoAdapter(), _build_repo()),
     )
@@ -192,6 +245,7 @@ def range_update(start_date_str, end_date_str):
         click.echo(f"❌ Error during update: {e}")
         import traceback
         traceback.print_exc()
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +263,13 @@ def annual_update(start_year, end_year):
     """
     click.echo(f"=== Annual Update Start: {start_year} ~ {end_year} ===")
 
+    db_dir = os.getenv("SQLITE_DB_DIR", "db")
+    drive_storage = _try_build_drive_storage()
+    if drive_storage is not None:
+        if not _sync_db_down(drive_storage, db_dir, range(start_year, end_year + 1)):
+            click.echo("❌ DB 다운로드 실패 - 로컬 상태를 신뢰할 수 없어 중단합니다.")
+            sys.exit(1)
+
     routine = RangeRoutineService(
         range_service_factory=lambda: RangeUpdateService(KrxDirectStockInfoAdapter(), _build_repo()),
     )
@@ -220,7 +281,7 @@ def annual_update(start_year, end_year):
     if result.failed_year is not None:
         click.echo(f"❌ Error processing {result.failed_year}: {result.error}")
         click.echo("⚠️ 오류로 인해 annual update를 중단합니다.")
-        return
+        sys.exit(1)
 
     click.echo("\n=== All Annual Updates Completed ===")
     click.echo("💡 엑셀 리포트를 생성하려면: uv run python -m src.cli export-excel --year <연도>")
@@ -333,9 +394,17 @@ def export_excel(year, start_date_str, end_date_str, file_path, use_drive):
         click.echo("💾 로컬 백업 완료")
 
         db_dir = os.getenv("SQLITE_DB_DIR", "db")
+        db_files_present = [p.name for p in sorted(Path(db_dir).glob("*.db")) if p.stem.isdigit()]
         uploaded = _upload_db_files(storage, db_dir)
         if uploaded:
             click.echo(f"☁️ DB 파일 업로드 완료: {', '.join(uploaded)}")
+        failed = sorted(set(db_files_present) - set(uploaded))
+        if failed:
+            # db_ssot_guide.md §6.2: 업로드 실패를 조용히 넘기면 이번에 계산한
+            # 최신 데이터가 다음 실행의 무조건 다운로드로 낡은 원격 사본에 덮여
+            # 사라질 수 있다 - 반드시 0이 아닌 exit code로 알려야 한다.
+            click.echo(f"❌ DB 파일 업로드 실패: {', '.join(failed)}")
+            sys.exit(1)
 
     if ok:
         click.echo(f"✅ 엑셀 리포트 생성 완료: {output_file}")
