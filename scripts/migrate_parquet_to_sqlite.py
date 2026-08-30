@@ -31,6 +31,14 @@ def main():
     sqlite_repo.save_cohorts_batch(cohorts)
     print(f"[Migrate] SQLite로 이관 완료 ({len(cohorts)}개 코호트)")
 
+    # db_ssot_guide.md §9-10: 조용히 사라지는 데이터는 카운트 비교 없이는 드러나지
+    # 않는다 - 이관 직후 실제로 다시 읽어서 소스와 결과 행 수를 대조한다.
+    migrated = sqlite_repo.load_cohorts_in_range(date(2000, 1, 1), date(2100, 12, 31))
+    assert len(migrated) == len(cohorts), (
+        f"[Migrate] 이관 후 카운트 불일치: 소스 {len(cohorts)}개 vs SQLite {len(migrated)}개"
+    )
+    print(f"[Migrate] 카운트 검증 통과 ({len(migrated)}개)")
+
 
 if __name__ == '__main__':
     main()

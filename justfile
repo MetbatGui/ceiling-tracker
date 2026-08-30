@@ -19,6 +19,13 @@ push-main:
 # push-main -> docker-build -> docker-deploy -> release를 순서대로 한 번에 실행
 ship: push-main docker-build docker-deploy release
 
+# 1회성 실행(`ceiling-tracker` 서비스, --rm 없이 중간에 죽은 경우)이 남긴 정지
+# 컨테이너와, 재빌드로 태그가 떨어져 나간 dangling 이미지를 정리 (docker_guide.md §7).
+# 상시 cron 서비스(ceiling-tracker-cron)는 running 상태라 대상에서 자동 제외됨.
+docker-clean:
+    docker container prune -f --filter "label=com.docker.compose.project=ceiling-tracker"
+    docker image prune -f --filter "label=com.docker.compose.project=ceiling-tracker"
+
 setup-release:
     git checkout master
     git remote add employers-ceiling-tracker https://github.com/guruta71/ceiling-tracker.git

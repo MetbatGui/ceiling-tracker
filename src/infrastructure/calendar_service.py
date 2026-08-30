@@ -111,4 +111,4 @@ if __name__ == '__main__':
     assert cal.is_holiday(date(2026, 5, 2)) is True   # 토요일
     assert cal.is_holiday(date(2026, 5, 1)) is True   # 근로자의 날, KRX 고시에 포함됨
     assert cal.is_holiday(date(2026, 8, 18)) is False  # 평일, 휴장일 아님 (화요일)
-    print("[calendar_service] self-check OK")
+    logger.info("[calendar_service] self-check OK")
